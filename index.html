@@ -16,6 +16,28 @@
   <div id="toast-root" class="toast-root" aria-live="polite"></div>
 
   <script src="config.js"></script>
-  <script src="app.js" defer></script>
+  <script>
+    (function () {
+      function loadApp() {
+        var script = document.createElement('script');
+        script.src = 'app.js';
+        script.onerror = function () {
+          document.getElementById('app').innerHTML = '<div class="boot-screen"><div>前台程式載入失敗，請確認 app.js 已上載。</div></div>';
+        };
+        document.body.appendChild(script);
+      }
+      if ((window.APP_CONFIG || {}).demoMode !== false) {
+        loadApp();
+        return;
+      }
+      var supabaseScript = document.createElement('script');
+      supabaseScript.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+      supabaseScript.onload = loadApp;
+      supabaseScript.onerror = function () {
+        document.getElementById('app').innerHTML = '<div class="boot-screen"><div>Supabase 程式庫載入失敗，請檢查網絡連線。</div></div>';
+      };
+      document.head.appendChild(supabaseScript);
+    })();
+  </script>
 </body>
 </html>

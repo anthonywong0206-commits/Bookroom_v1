@@ -5,6 +5,8 @@
   const cfg=window.APP_CONFIG||{};
   const DEMO=cfg.demoMode!==false;
   const DEMO_KEY='rrbs_admin_demo_v4';
+  const SYNC_CHANNEL='rrbs-resource-sync';
+  let syncChannel=null;
   const state={tab:'organizations',organizations:[],resources:[],availability:[],bookings:[],resourceType:'room',editingOrgId:null,editingResourceId:null,selectedResourceId:null,user:null,loading:false,error:''};
   let supabase=null;
 
@@ -28,17 +30,44 @@
   init();
 
   async function init(){
+    setupCrossPageSync();
     try{
       if(DEMO){ loadDemo(); state.user={email:'demo-admin@local'}; render(); return; }
       if(!cfg.supabaseUrl||!cfg.supabasePublishableKey){ return renderConfigError(); }
       if(!window.supabase){ return renderFatal('Supabase library 未能載入，請重新整理頁面。'); }
       supabase=window.supabase.createClient(cfg.supabaseUrl,cfg.supabasePublishableKey);
+      setupRealtime();
       const {data:{session}}=await supabase.auth.getSession();
       if(!session){ renderLogin(); return; }
       const allowed=await verifyAdmin(session.user);
       if(!allowed){ await supabase.auth.signOut(); renderLogin('此帳戶沒有管理員權限。'); return; }
       state.user=session.user; await refreshAll(); render();
     }catch(err){renderFatal(errorMessage(err));}
+  }
+
+
+  function setupCrossPageSync(){
+    window.addEventListener('storage',async event=>{
+      if(DEMO&&event.key===DEMO_KEY){loadDemo();render();}
+    });
+    if('BroadcastChannel' in window){
+      syncChannel=new BroadcastChannel(SYNC_CHANNEL);
+      syncChannel.onmessage=async()=>{
+        if(DEMO){loadDemo();render();}
+        else if(supabase){await refreshAll();render();}
+      };
+    }
+  }
+
+  function setupRealtime(){
+    if(!supabase||state._realtimeReady)return;
+    state._realtimeReady=true;
+    supabase.channel('rrbs-admin-sync')
+      .on('postgres_changes',{event:'*',schema:'public',table:'organizations'},async()=>{await refreshAll();render();})
+      .on('postgres_changes',{event:'*',schema:'public',table:'resources'},async()=>{await refreshAll();render();})
+      .on('postgres_changes',{event:'*',schema:'public',table:'resource_availability'},async()=>{await refreshAll();render();})
+      .on('postgres_changes',{event:'*',schema:'public',table:'bookings'},async()=>{await refreshAll();render();})
+      .subscribe();
   }
 
   function loadDemo(){
@@ -54,7 +83,7 @@
       state.organizations=clone(seed.organizations); state.resources=clone(seed.resources); state.availability=clone(seed.availability); state.bookings=[]; persistDemo();
     }
   }
-  function persistDemo(){ localStorage.setItem(DEMO_KEY,JSON.stringify({organizations:state.organizations,resources:state.resources,availability:state.availability,bookings:state.bookings})); }
+  function persistDemo(){ localStorage.setItem(DEMO_KEY,JSON.stringify({organizations:state.organizations,resources:state.resources,availability:state.availability,bookings:state.bookings})); if(syncChannel)syncChannel.postMessage({type:'changed',at:Date.now()}); }
   function clone(v){return JSON.parse(JSON.stringify(v));}
   function uid(prefix){return prefix+'-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8);}
 
@@ -171,7 +200,7 @@
   function bookingsView(){
     const rows=state.bookings;
     return `${top('申請審批','查看及更新房間／物品預約狀態')}
-      <section class="panel"><div class="panel-head"><div><h3>最近申請</h3><p>最多顯示最近 100 筆</p></div></div><div class="table-wrap"><table><thead><tr><th>編號</th><th>資源</th><th>日期</th><th>時段</th><th>申請人</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.length?rows.map(b=>`<tr><td>${esc(b.reference_no||'—')}</td><td>${esc(resourceName(b.resource_id))}</td><td>${esc(b.booking_date||'')}</td><td>${shortTime(b.start_time)}–${shortTime(b.end_time)}</td><td>${esc(b.applicant_name||'')}</td><td><span class="tag ${b.status==='approved'?'green':b.status==='pending'?'':'gray'}">${statusLabel(b.status)}</span></td><td><div class="row-actions">${b.status==='pending'?`<button class="btn btn-primary btn-small" data-booking-status="${b.id}:approved">批准</button><button class="btn btn-danger btn-small" data-booking-status="${b.id}:rejected">拒絕</button>`:''}${b.status==='approved'?`<button class="btn btn-secondary btn-small" data-booking-status="${b.id}:completed">完成</button>`:''}</div></td></tr>`).join(''):'<tr><td colspan="7" class="empty">暫未有申請</td></tr>'}</tbody></table></div></section>`;
+      <section class="panel"><div class="panel-head"><div><h3>最近申請</h3><p>最多顯示最近 100 筆</p></div></div><div class="table-wrap"><table><thead><tr><th>編號</th><th>資源</th><th>日期</th><th>時段</th><th>申請人</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.length?rows.map(b=>`<tr><td>${esc(b.reference_no||'—')}</td><td>${esc(resourceName(b.resource_id))}</td><td>${esc(b.loan_end_date&&b.loan_end_date!==b.booking_date?`${b.booking_date} 至 ${b.loan_end_date}`:(b.booking_date||''))}</td><td>${shortTime(b.start_time)}–${shortTime(b.end_time)}</td><td>${esc(b.applicant_name||'')}</td><td><span class="tag ${b.status==='approved'?'green':b.status==='pending'?'':'gray'}">${statusLabel(b.status)}</span></td><td><div class="row-actions">${b.status==='pending'?`<button class="btn btn-primary btn-small" data-booking-status="${b.id}:approved">批准</button><button class="btn btn-danger btn-small" data-booking-status="${b.id}:rejected">拒絕</button>`:''}${b.status==='approved'?`<button class="btn btn-secondary btn-small" data-booking-status="${b.id}:completed">完成</button>`:''}</div></td></tr>`).join(''):'<tr><td colspan="7" class="empty">暫未有申請</td></tr>'}</tbody></table></div></section>`;
   }
 
   function bind(){

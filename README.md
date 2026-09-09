@@ -1,52 +1,45 @@
-# 房間及物品預約系統 — 管理員 CRUD 修正版
+# 房間及物品預約系統 — 前後台同步修正版
 
-本版本修正管理員後台無法新增／修改機構、房間及物品的問題，並保留上一版前台設定。
+本版本修正「後台更新房間／物品後，前台沒有同步」問題。
 
-## 今次修正
-
-### 管理員後台
-- 補回及重建 `admin-app.js`
-- 補回及重建 `admin.css`
-- 管理員可新增、修改、啟用／停用、刪除機構
-- 管理員可新增、修改、啟用／停用、刪除房間
-- 管理員可新增、修改、啟用／停用、刪除物品
-- 房間可設定容量、位置、描述
-- 物品可設定庫存、位置、描述、是否必須配合房間使用
-- 房間／物品可設定每週固定時段或指定日期時段
-- 已有借用紀錄的機構／資源會阻止硬刪除，以保護歷史記錄
+## 資料同步
 
 ### Demo Mode
-`demoMode: true` 時，管理員 CRUD 會保存到瀏覽器 `localStorage`，重新整理頁面仍然保留，可完整測試後台操作。
+前後台共用同一份瀏覽器資料：`rrbs_admin_demo_v4`。
 
-### Supabase 正式模式
-`demoMode: false` 時，同一套介面會直接對以下資料表 CRUD：
-- `organizations`
-- `resources`
-- `resource_availability`
+後台新增／修改／刪除：
+- 機構
+- 房間
+- 物品
+- 可用時段
 
-管理員登入帳戶必須在 `profiles` 表內設定 `role = 'admin'`。
+前台會讀取相同資料，不再使用 hardcoded 房間／物品。
 
-如果舊 Supabase deployment 出現 RLS / permission denied，請執行：
+前台提交預約後，管理員後台亦會讀到相同 pending booking；管理員批准後，前台「查詢」會顯示該資源的借用日期。
 
-`supabase/20260909_admin_crud_fix.sql`
+### Supabase Mode
+前台直接使用 Supabase 作唯一資料來源，並訂閱 Realtime：
+- organizations
+- resources
+- resource_availability
 
-## 保留上一版前台設定
-- 手機底部導航只保留：首頁／預約／查詢
-- 公開查詢只顯示房間／物品名稱及借用日期
-- 不公開姓名、電話、用途、申請編號及備註
-- Desktop 與手機首頁均採用「預約／查詢」大按鈕
-- 管理員登入入口只在 Desktop 顯示
+公開借用情況透過安全 RPC 取得，不公開個人資料。
 
-## 更新建議
+## 正式模式更新步驟
 
-如你的 `config.js` 已填入 Supabase URL / Publishable Key，請使用 Patch ZIP，以免覆蓋現有設定。
+1. 將今次 ZIP 全部檔案覆蓋現有網站。
+2. 如仍使用 `demoMode: true`，不需執行 SQL，Demo 前後台已同步。
+3. 如使用 `demoMode: false`，在 Supabase SQL Editor 執行：
+   `supabase/20260909_frontend_backend_sync.sql`
+4. 確認 `config.js` 保留你的 Supabase URL / Publishable Key。
+5. Push 到 GitHub，等 Vercel 自動部署。
 
-Patch 主要更新：
-- `admin.html`
-- `admin-app.js`
-- `admin.css`
-- `app.js`
-- `styles.css`
-- `supabase/20260909_admin_crud_fix.sql`
+## 主要修復檔案
 
-完整 ZIP 則包含整套網站。
+- `app.js` — 前台改讀共同資料源、Realtime、同步預約提交
+- `admin-app.js` — Demo 跨頁同步 + Supabase Realtime
+- `index.html` — 正式模式自動載入 Supabase library
+- `supabase/20260909_frontend_backend_sync.sql` — 公開 catalogue、公開安全查詢、前台提交 RPC
+- `supabase/schema.sql` — 全新安裝已包含同步修正
+
+詳細測試與說明見 `SYNC_FIX.md`。

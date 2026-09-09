@@ -2,29 +2,17 @@
   const app = document.getElementById('app');
   const toastRoot = document.getElementById('toast-root');
 
-  const STORAGE_KEY = 'rrbs_demo_bookings_v2';
+  const cfg = window.APP_CONFIG || {};
+  const DEMO = cfg.demoMode !== false;
+  const ADMIN_DEMO_KEY = 'rrbs_admin_demo_v4';
   const FORM_KEY = 'rrbs_demo_form_v2';
+  const SYNC_CHANNEL = 'rrbs-resource-sync';
 
-  const rooms = [
-    { id: 'room-a12', name: '活動室 1-2', capacity: 20, description: '適合小組、講座及手工活動', location: '1/F' },
-    { id: 'room-meeting', name: '會議室', capacity: 10, description: '適合會議、小組面談', location: '2/F' },
-    { id: 'room-a3', name: '活動室 3', capacity: 30, description: '適合大型活動及訓練', location: '1/F' },
-  ];
-
-  const centerUseItems = [
-    { id: 'projector', name: '投影機', description: '中心內同日使用', max: 2, icon: 'projector' },
-    { id: 'mic', name: '手提咪', description: '中心內同日使用', max: 4, icon: 'mic' },
-    { id: 'board', name: '白板', description: '中心內同日使用', max: 2, icon: 'board' },
-    { id: 'tablet', name: '平板電腦', description: '中心內同日使用', max: 6, icon: 'tablet' },
-  ];
-
-  const loanItems = [
-    { id: 'wheelchair', name: '輪椅', description: '外借物品', max: 3, icon: 'wheelchair' },
-    { id: 'bp', name: '血壓計', description: '外借物品', max: 8, icon: 'bp' },
-    { id: 'activity-kit', name: '活動器材', description: '外借物品', max: 6, icon: 'kit' },
-    { id: 'speaker', name: '擴音器', description: '外借物品', max: 4, icon: 'speaker' },
-  ];
-
+  let supabase = null;
+  let syncChannel = null;
+  let rooms = [];
+  let centerUseItems = [];
+  let loanItems = [];
   const icons = {
     calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>',
     search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
@@ -56,12 +44,19 @@
     roomFlow: defaultRoomFlow(),
     loanFlow: defaultLoanFlow(),
     confirmation: null,
+    organizations: [],
+    availability: [],
+    publicBookings: [],
+    loadingData: true,
+    sourceError: '',
   };
 
   init();
 
-  function init() {
+  async function init() {
     hydrateStored();
+    setupSyncListeners();
+    await refreshFromSource(false);
     render();
   }
 
@@ -100,76 +95,210 @@
       if (saved.roomFlow) state.roomFlow = { ...defaultRoomFlow(), ...saved.roomFlow };
       if (saved.loanFlow) state.loanFlow = { ...defaultLoanFlow(), ...saved.loanFlow };
     } catch (e) {}
-
-    const existing = getBookings();
-    if (!existing.length) {
-      const seeds = [
-        {
-          bookingNo: 'R20260415001',
-          type: 'room',
-          title: '會議室',
-          status: '待審批',
-          date: '2026-04-15',
-          detail: '09:00 - 11:00',
-          purpose: '義工會議',
-          createdAt: new Date().toISOString(),
-          applicantName: '陳大文',
-          phone: '91234567',
-          roomName: '會議室',
-          roomSlots: ['09:00 - 11:00'],
-          centerItems: [],
-        },
-        {
-          bookingNo: 'B20260412003',
-          type: 'loan',
-          title: '投影機',
-          status: '已批准',
-          date: '2026-04-12',
-          detail: '借用至 2026-04-19',
-          purpose: '活動分享',
-          createdAt: new Date().toISOString(),
-          applicantName: '李小美',
-          phone: '92345678',
-          loanItems: [{ name: '投影機', qty: 1 }],
-          startDate: '2026-04-12',
-          returnDate: '2026-04-19',
-        },
-        {
-          bookingNo: 'B20260408002',
-          type: 'loan',
-          title: '輪椅',
-          status: '已歸還',
-          date: '2026-04-08',
-          detail: '借用至 2026-04-15',
-          purpose: '暫借家用',
-          createdAt: new Date().toISOString(),
-          applicantName: '王先生',
-          phone: '93456789',
-          loanItems: [{ name: '輪椅', qty: 1 }],
-          startDate: '2026-04-08',
-          returnDate: '2026-04-15',
-        },
-      ];
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(seeds));
-    }
   }
 
   function persistForms() {
     localStorage.setItem(FORM_KEY, JSON.stringify({ roomFlow: state.roomFlow, loanFlow: state.loanFlow }));
   }
 
-  function getBookings() {
+  function setupSyncListeners() {
+    window.addEventListener('storage', async (event) => {
+      if (DEMO && event.key === ADMIN_DEMO_KEY) await refreshFromSource(true);
+    });
+    if ('BroadcastChannel' in window) {
+      syncChannel = new BroadcastChannel(SYNC_CHANNEL);
+      syncChannel.onmessage = async () => { await refreshFromSource(true); };
+    }
+    window.addEventListener('focus', () => refreshFromSource(true));
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') refreshFromSource(true);
+    });
+  }
+
+  function broadcastSync() {
+    if (syncChannel) syncChannel.postMessage({ type: 'changed', at: Date.now() });
+  }
+
+  async function refreshFromSource(shouldRender = true) {
+    state.loadingData = true;
+    state.sourceError = '';
     try {
-      return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-    } catch (e) {
-      return [];
+      if (DEMO) loadDemoSource();
+      else await loadSupabaseSource();
+      rebuildCatalog();
+    } catch (error) {
+      state.sourceError = readableError(error);
+    } finally {
+      state.loadingData = false;
+      if (shouldRender) render();
     }
   }
 
-  function saveBooking(booking) {
-    const list = getBookings();
-    list.unshift(booking);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+  function demoSeed() {
+    return {
+      organizations: [
+        { id: 'org-demo-1', name: '社區綜合服務中心', active: true, created_at: new Date().toISOString() },
+        { id: 'org-demo-2', name: '樂齡活動中心', active: true, created_at: new Date().toISOString() },
+      ],
+      resources: [
+        { id: 'room-demo-1', organization_id: 'org-demo-1', type: 'room', name: '活動室 1-2', location: '1/F', description: '適合小組及活動', capacity: 20, stock_quantity: 1, requires_room: false, active: true },
+        { id: 'room-demo-2', organization_id: 'org-demo-1', type: 'room', name: '會議室', location: '2/F', description: '適合會議', capacity: 10, stock_quantity: 1, requires_room: false, active: true },
+        { id: 'item-demo-1', organization_id: 'org-demo-1', type: 'item', name: '投影機', location: '中心內', description: '中心即日使用', capacity: 1, stock_quantity: 2, requires_room: true, active: true },
+        { id: 'item-demo-2', organization_id: 'org-demo-1', type: 'item', name: '輪椅', location: '地下接待處', description: '可外借', capacity: 1, stock_quantity: 3, requires_room: false, active: true },
+      ],
+      availability: [
+        { id: 'av-1', resource_id: 'room-demo-1', weekday: 1, specific_date: null, date_from: null, date_to: null, start_time: '09:00', end_time: '18:00', active: true },
+        { id: 'av-2', resource_id: 'room-demo-2', weekday: 2, specific_date: null, date_from: null, date_to: null, start_time: '09:00', end_time: '17:00', active: true },
+      ],
+      bookings: [],
+    };
+  }
+
+  function loadDemoSource() {
+    let data;
+    try { data = JSON.parse(localStorage.getItem(ADMIN_DEMO_KEY) || 'null'); } catch (_) { data = null; }
+    if (!data) {
+      data = demoSeed();
+      localStorage.setItem(ADMIN_DEMO_KEY, JSON.stringify(data));
+    }
+    state.organizations = Array.isArray(data.organizations) ? data.organizations : [];
+    state._allResources = Array.isArray(data.resources) ? data.resources : [];
+    state.availability = Array.isArray(data.availability) ? data.availability : [];
+    state._allBookings = Array.isArray(data.bookings) ? data.bookings : [];
+    state.publicBookings = buildDemoPublicBookings(state._allBookings);
+  }
+
+  function saveDemoSource() {
+    let latest = null;
+    try { latest = JSON.parse(localStorage.getItem(ADMIN_DEMO_KEY) || 'null'); } catch (_) {}
+    const current = {
+      organizations: latest?.organizations || state.organizations,
+      resources: latest?.resources || state._allResources || [],
+      availability: latest?.availability || state.availability,
+      bookings: state._allBookings || latest?.bookings || [],
+    };
+    state.organizations = current.organizations;
+    state._allResources = current.resources;
+    state.availability = current.availability;
+    localStorage.setItem(ADMIN_DEMO_KEY, JSON.stringify(current));
+    broadcastSync();
+  }
+
+  async function ensureSupabaseClient() {
+    if (supabase) return supabase;
+    if (!cfg.supabaseUrl || !cfg.supabasePublishableKey) throw new Error('正式模式尚未設定 Supabase URL / Publishable Key');
+    if (!window.supabase) throw new Error('Supabase 程式庫未能載入');
+    supabase = window.supabase.createClient(cfg.supabaseUrl, cfg.supabasePublishableKey);
+    setupSupabaseRealtime();
+    return supabase;
+  }
+
+  function setupSupabaseRealtime() {
+    if (!supabase || state._realtimeReady) return;
+    state._realtimeReady = true;
+    supabase.channel('rrbs-public-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'organizations' }, () => refreshFromSource(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'resources' }, () => refreshFromSource(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'resource_availability' }, () => refreshFromSource(true))
+      .subscribe();
+  }
+
+  async function loadSupabaseSource() {
+    const client = await ensureSupabaseClient();
+    const [orgs, resourcesResult, availabilityResult, publicResult] = await Promise.all([
+      client.from('organizations').select('*').eq('active', true).order('name'),
+      client.from('resources').select('*').eq('active', true).order('type').order('name'),
+      client.from('resource_availability').select('*').eq('active', true).order('resource_id'),
+      client.rpc('get_public_resource_bookings'),
+    ]);
+    for (const result of [orgs, resourcesResult, availabilityResult, publicResult]) {
+      if (result.error) throw result.error;
+    }
+    state.organizations = orgs.data || [];
+    state._allResources = resourcesResult.data || [];
+    state.availability = availabilityResult.data || [];
+    state.publicBookings = (publicResult.data || []).map(row => ({
+      resourceId: row.resource_id,
+      title: row.resource_name,
+      type: row.resource_type === 'item' ? 'loan' : 'room',
+      date: row.booking_date,
+      returnDate: row.loan_end_date || row.booking_date,
+      status: row.status || 'approved',
+    }));
+  }
+
+  function rebuildCatalog() {
+    const activeOrgIds = new Set(state.organizations.filter(org => org.active !== false).map(org => org.id));
+    const resources = (state._allResources || []).filter(resource => resource.active !== false && activeOrgIds.has(resource.organization_id));
+    rooms = resources.filter(resource => resource.type === 'room').map(resource => ({
+      ...resource,
+      capacity: Number(resource.capacity || 1),
+      organizationName: organizationName(resource.organization_id),
+    }));
+    centerUseItems = resources.filter(resource => resource.type === 'item' && resource.requires_room).map(toUiItem);
+    loanItems = resources.filter(resource => resource.type === 'item' && !resource.requires_room).map(toUiItem);
+    if (state.roomFlow.roomId && !rooms.some(room => room.id === state.roomFlow.roomId)) {
+      state.roomFlow.roomId = '';
+      state.roomFlow.date = '';
+      state.roomFlow.slots = [];
+      state.roomFlow.items = {};
+    }
+  }
+
+  function toUiItem(resource) {
+    return {
+      ...resource,
+      max: Math.max(1, Number(resource.stock_quantity || 1)),
+      icon: iconForItem(resource.name),
+      organizationName: organizationName(resource.organization_id),
+      description: resource.description || (resource.requires_room ? '中心內同日使用' : '外借物品'),
+    };
+  }
+
+  function iconForItem(name) {
+    const text = String(name || '');
+    if (/輪椅/.test(text)) return 'wheelchair';
+    if (/血壓/.test(text)) return 'bp';
+    if (/咪|麥克風/.test(text)) return 'mic';
+    if (/白板/.test(text)) return 'board';
+    if (/平板|tablet/i.test(text)) return 'tablet';
+    if (/擴音|喇叭|speaker/i.test(text)) return 'speaker';
+    if (/投影/.test(text)) return 'projector';
+    return 'kit';
+  }
+
+  function organizationName(id) {
+    return state.organizations.find(org => org.id === id)?.name || '';
+  }
+
+  function buildDemoPublicBookings(bookings) {
+    const seen = new Set();
+    return (bookings || [])
+      .filter(booking => ['approved', 'completed', '已批准', '已歸還'].includes(booking.status))
+      .map(booking => {
+        const resource = (state._allResources || []).find(item => item.id === booking.resource_id);
+        const type = resource?.type === 'item' ? 'loan' : (booking.type === 'loan' ? 'loan' : 'room');
+        const row = {
+          resourceId: booking.resource_id,
+          title: resource?.name || booking.title || booking.roomName || '資源',
+          type,
+          date: booking.booking_date || booking.date,
+          returnDate: booking.loan_end_date || booking.returnDate || booking.booking_date || booking.date,
+          status: booking.status,
+        };
+        const key = [row.resourceId, row.title, row.date, row.returnDate].join('|');
+        if (seen.has(key)) return null;
+        seen.add(key);
+        return row;
+      })
+      .filter(Boolean);
+  }
+
+  function readableError(error) {
+    const message = error?.message || error?.details || String(error || '資料同步失敗');
+    if (/get_public_resource_bookings/i.test(message)) return 'Supabase 尚未套用前後台同步 SQL';
+    if (/permission denied|row-level security/i.test(message)) return 'Supabase 讀取權限尚未套用同步 SQL';
+    return message;
   }
 
   function render() {
@@ -468,7 +597,7 @@
 
   function renderQueryPage() {
     const q = state.query.trim().toLowerCase();
-    const bookings = getBookings().filter(item => ['已批准', '已歸還', 'approved', 'completed'].includes(item.status));
+    const bookings = state.publicBookings || [];
     const filtered = !q ? bookings : bookings.filter(item =>
       [item.title, item.roomName, ...(item.loanItems || []).map(x => x.name)].filter(Boolean).join(' ').toLowerCase().includes(q)
     );
@@ -503,7 +632,7 @@
   }
 
   function renderMyPage() {
-    const bookings = getBookings();
+    const bookings = state.publicBookings || [];
     return `
       ${renderHeader('我的申請', '查看已提交之房間及物品申請', 'home')}
       <div class="section-title"><h2>全部申請</h2><small>${bookings.length} 筆</small></div>
@@ -574,7 +703,9 @@
   function renderDayCell(date, kind, selected) {
     if (!date) return '<div></div>';
     const iso = toIsoDate(date);
-    const disabled = iso < todayIso();
+    const past = iso < todayIso();
+    const roomUnavailable = kind === 'room' && (!state.roomFlow.roomId || !isRoomDateAvailable(state.roomFlow.roomId, iso));
+    const disabled = past || roomUnavailable;
     const isToday = iso === todayIso();
     const cls = ['day-cell', disabled ? 'disabled' : 'available', selected === iso ? 'selected' : '', isToday ? 'today' : ''].filter(Boolean).join(' ');
     return `<button class="${cls}" ${disabled ? 'disabled' : `data-select-date="${kind}:${iso}"`}>${date.getDate()}</button>`;
@@ -793,75 +924,189 @@
     render();
   }
 
-  function submitRoomBooking() {
+  async function submitRoomBooking() {
     const f = state.roomFlow;
     if (!f.purpose.trim() || !f.applicantName.trim() || !f.phone.trim()) {
       return toast('請填寫用途、申請人姓名及聯絡電話', 'error');
     }
     const room = rooms.find(r => r.id === f.roomId);
-    const bookingNo = makeBookingNo('R');
-    const booking = {
-      bookingNo,
-      type: 'room',
-      title: room ? room.name : '房間',
-      roomName: room ? room.name : '',
-      status: '待審批',
-      date: f.date,
-      detail: f.slots.join('、'),
-      purpose: f.purpose.trim(),
-      applicantName: f.applicantName.trim(),
-      phone: f.phone.trim(),
-      organization: f.organization.trim(),
-      notes: f.notes.trim(),
-      roomSlots: [...f.slots],
-      centerItems: selectedItemSummary(centerUseItems, f.items),
-      createdAt: new Date().toISOString(),
-    };
-    saveBooking(booking);
-    state.confirmation = { type: 'room', bookingNo };
-    state.roomFlow = defaultRoomFlow();
-    state.page = 'confirmation';
-    state.currentTab = 'query';
-    persistForms();
-    render();
-    toast('房間預約已提交', 'success');
+    if (!room) return toast('所選房間已不存在，請重新選擇', 'error');
+    try {
+      let bookingNo;
+      if (DEMO) bookingNo = createDemoRoomRequest(room, f);
+      else bookingNo = await createSupabaseRoomRequest(room, f);
+      state.confirmation = { type: 'room', bookingNo };
+      state.roomFlow = defaultRoomFlow();
+      state.page = 'confirmation';
+      state.currentTab = 'query';
+      persistForms();
+      await refreshFromSource(false);
+      render();
+      toast('房間預約已提交', 'success');
+    } catch (error) {
+      toast('未能提交申請：' + readableError(error), 'error');
+    }
   }
 
-  function submitLoanBooking() {
+  function createDemoRoomRequest(room, f) {
+    const groupRef = makeBookingNo('R');
+    const now = new Date().toISOString();
+    const createdRoomIds = [];
+    const bookings = state._allBookings || (state._allBookings = []);
+    f.slots.forEach((slot, index) => {
+      const times = parseSlot(slot);
+      const id = localId('booking');
+      createdRoomIds.push(id);
+      bookings.unshift({
+        id,
+        reference_no: `${groupRef}-${index + 1}`,
+        resource_id: room.id,
+        booking_date: f.date,
+        start_time: times.start,
+        end_time: times.end,
+        quantity: 1,
+        attendees: 1,
+        purpose: f.purpose.trim(),
+        applicant_name: f.applicantName.trim(),
+        phone: f.phone.trim(),
+        related_booking_id: null,
+        loan_end_date: null,
+        status: 'pending',
+        created_at: now,
+      });
+    });
+    const selectedItems = itemRequestPayload(centerUseItems, f.items);
+    if (selectedItems.length) {
+      const times = overallSlotRange(f.slots);
+      selectedItems.forEach((item, index) => {
+        bookings.unshift({
+          id: localId('booking'),
+          reference_no: `${groupRef}-I${index + 1}`,
+          resource_id: item.resource_id,
+          booking_date: f.date,
+          start_time: times.start,
+          end_time: times.end,
+          quantity: item.quantity,
+          attendees: 1,
+          purpose: f.purpose.trim(),
+          applicant_name: f.applicantName.trim(),
+          phone: f.phone.trim(),
+          related_booking_id: createdRoomIds[0] || null,
+          loan_end_date: null,
+          status: 'pending',
+          created_at: now,
+        });
+      });
+    }
+    saveDemoSource();
+    return groupRef;
+  }
+
+  async function createSupabaseRoomRequest(room, f) {
+    const client = await ensureSupabaseClient();
+    const { data, error } = await client.rpc('submit_public_room_request', {
+      p_room_resource_id: room.id,
+      p_booking_date: f.date,
+      p_slots: f.slots.map(slot => {
+        const parsed = parseSlot(slot);
+        return { start_time: parsed.start, end_time: parsed.end };
+      }),
+      p_items: itemRequestPayload(centerUseItems, f.items),
+      p_purpose: f.purpose.trim(),
+      p_applicant_name: f.applicantName.trim(),
+      p_phone: f.phone.trim(),
+    });
+    if (error) throw error;
+    return data;
+  }
+
+  async function submitLoanBooking() {
     const f = state.loanFlow;
     if (!f.startDate || !f.returnDate) return toast('請選擇借用及歸還日期', 'error');
     if (f.returnDate < f.startDate) return toast('歸還日期不可早於借用開始日期', 'error');
-    const items = selectedItemSummary(loanItems, f.items);
+    const items = itemRequestPayload(loanItems, f.items);
     if (!items.length) return toast('請至少選擇一項外借物品', 'error');
     if (!f.purpose.trim() || !f.applicantName.trim() || !f.phone.trim()) {
       return toast('請填寫用途、申請人姓名及聯絡電話', 'error');
     }
-    const bookingNo = makeBookingNo('B');
-    const booking = {
-      bookingNo,
-      type: 'loan',
-      title: items.map(x => x.name).join('、'),
-      status: '待審批',
-      date: f.startDate,
-      detail: `借用至 ${f.returnDate}`,
-      purpose: f.purpose.trim(),
-      applicantName: f.applicantName.trim(),
-      phone: f.phone.trim(),
-      organization: f.organization.trim(),
-      notes: f.notes.trim(),
-      loanItems: items,
-      startDate: f.startDate,
-      returnDate: f.returnDate,
-      createdAt: new Date().toISOString(),
-    };
-    saveBooking(booking);
-    state.confirmation = { type: 'loan', bookingNo };
-    state.loanFlow = defaultLoanFlow();
-    state.page = 'confirmation';
-    state.currentTab = 'query';
-    persistForms();
-    render();
-    toast('外借物品申請已提交', 'success');
+    try {
+      let bookingNo;
+      if (DEMO) bookingNo = createDemoLoanRequest(f, items);
+      else bookingNo = await createSupabaseLoanRequest(f, items);
+      state.confirmation = { type: 'loan', bookingNo };
+      state.loanFlow = defaultLoanFlow();
+      state.page = 'confirmation';
+      state.currentTab = 'query';
+      persistForms();
+      await refreshFromSource(false);
+      render();
+      toast('外借物品申請已提交', 'success');
+    } catch (error) {
+      toast('未能提交申請：' + readableError(error), 'error');
+    }
+  }
+
+  function createDemoLoanRequest(f, items) {
+    const groupRef = makeBookingNo('B');
+    const now = new Date().toISOString();
+    const bookings = state._allBookings || (state._allBookings = []);
+    items.forEach((item, index) => {
+      bookings.unshift({
+        id: localId('booking'),
+        reference_no: `${groupRef}-${index + 1}`,
+        resource_id: item.resource_id,
+        booking_date: f.startDate,
+        loan_end_date: f.returnDate,
+        start_time: '09:00',
+        end_time: '18:00',
+        quantity: item.quantity,
+        attendees: 1,
+        purpose: f.purpose.trim(),
+        applicant_name: f.applicantName.trim(),
+        phone: f.phone.trim(),
+        related_booking_id: null,
+        status: 'pending',
+        created_at: now,
+      });
+    });
+    saveDemoSource();
+    return groupRef;
+  }
+
+  async function createSupabaseLoanRequest(f, items) {
+    const client = await ensureSupabaseClient();
+    const { data, error } = await client.rpc('submit_public_loan_request', {
+      p_start_date: f.startDate,
+      p_return_date: f.returnDate,
+      p_items: items,
+      p_purpose: f.purpose.trim(),
+      p_applicant_name: f.applicantName.trim(),
+      p_phone: f.phone.trim(),
+    });
+    if (error) throw error;
+    return data;
+  }
+
+  function itemRequestPayload(source, bag) {
+    return source
+      .map(item => ({ resource_id: item.id, quantity: Number(bag[item.id] || 0) }))
+      .filter(item => item.quantity > 0);
+  }
+
+  function parseSlot(slot) {
+    const parts = String(slot).split('-').map(part => part.trim());
+    return { start: parts[0] || '09:00', end: parts[1] || '10:00' };
+  }
+
+  function overallSlotRange(slots) {
+    const parsed = slots.map(parseSlot);
+    const starts = parsed.map(item => item.start).sort();
+    const ends = parsed.map(item => item.end).sort();
+    return { start: starts[0] || '09:00', end: ends[ends.length - 1] || '10:00' };
+  }
+
+  function localId(prefix) {
+    return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
   }
 
   function renderNav() {
@@ -883,15 +1128,29 @@
   }
 
   function getRoomSlots(roomId, dateIso) {
+    if (!roomId || !dateIso) return [];
     const weekday = new Date(`${dateIso}T12:00:00`).getDay();
-    const base = roomId === 'room-meeting'
-      ? ['09:30 - 11:00', '11:00 - 12:30', '14:00 - 15:30', '15:30 - 17:00']
-      : roomId === 'room-a3'
-        ? ['09:00 - 12:00', '14:00 - 16:00', '16:00 - 18:00']
-        : ['09:00 - 11:00', '11:00 - 13:00', '14:00 - 16:00', '16:00 - 18:00'];
-    if (weekday === 0) return ['14:00 - 16:00'];
-    if (weekday === 6) return base.filter((_, idx) => idx < 3);
-    return base;
+    return state.availability
+      .filter(rule => rule.resource_id === roomId && rule.active !== false)
+      .filter(rule => availabilityMatchesDate(rule, dateIso, weekday))
+      .sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)))
+      .map(rule => `${shortTime(rule.start_time)} - ${shortTime(rule.end_time)}`);
+  }
+
+  function isRoomDateAvailable(roomId, dateIso) {
+    return getRoomSlots(roomId, dateIso).length > 0;
+  }
+
+  function availabilityMatchesDate(rule, dateIso, weekday) {
+    if (rule.specific_date) return String(rule.specific_date) === dateIso;
+    if (rule.weekday === null || rule.weekday === undefined || Number(rule.weekday) !== Number(weekday)) return false;
+    if (rule.date_from && dateIso < String(rule.date_from)) return false;
+    if (rule.date_to && dateIso > String(rule.date_to)) return false;
+    return true;
+  }
+
+  function shortTime(value) {
+    return String(value || '').slice(0, 5);
   }
 
   function selectedItemSummary(source, bag) {
