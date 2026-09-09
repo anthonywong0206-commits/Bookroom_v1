@@ -1,6 +1,7 @@
 (function () {
   const app = document.getElementById('app');
   const toastRoot = document.getElementById('toast-root');
+  const DESKTOP_MEDIA = window.matchMedia('(min-width: 900px)');
 
   const STORAGE_KEY = 'rrbs_demo_bookings_v2';
   const FORM_KEY = 'rrbs_demo_form_v2';
@@ -62,6 +63,7 @@
 
   function init() {
     hydrateStored();
+    DESKTOP_MEDIA.addEventListener?.('change', render);
     render();
   }
 
@@ -173,14 +175,66 @@
   }
 
   function render() {
-    app.innerHTML = `
-      <div class="app-shell">
-        ${renderScreen()}
-      </div>
-      ${renderNav()}
-    `;
+    if (DESKTOP_MEDIA.matches) {
+      app.innerHTML = renderDesktopShell();
+    } else {
+      app.innerHTML = `
+        <div class="app-shell mobile-public">
+          ${renderScreen()}
+        </div>
+        ${renderNav()}
+      `;
+    }
     bindCommonEvents();
     persistForms();
+  }
+
+  function renderDesktopShell() {
+    const meta = desktopPageMeta();
+    return `
+      <div class="desktop-public">
+        <aside class="desktop-sidebar">
+          <div class="desktop-brand">
+            <img src="assets/app-icon.svg" alt="">
+            <div><strong>資源預約</strong><span>Booking System</span></div>
+          </div>
+          <div class="desktop-nav-label">主要功能</div>
+          <nav class="desktop-nav">
+            <button class="desktop-nav-btn ${state.currentTab === 'home' ? 'active' : ''}" data-nav-page="home">${icons.home}<span>首頁</span></button>
+            <button class="desktop-nav-btn ${state.currentTab === 'reserve' ? 'active' : ''}" data-nav-page="reserveType">${icons.calendar}<span>提交預約</span></button>
+            <button class="desktop-nav-btn ${state.currentTab === 'query' ? 'active' : ''}" data-nav-page="query">${icons.search}<span>資源借用查詢</span></button>
+          </nav>
+          <div class="desktop-sidebar-spacer"></div>
+          <a class="desktop-admin-link" href="admin.html">${icons.user}<span>管理員登入</span></a>
+          <div class="desktop-cloud-note">GitHub · Vercel · Supabase</div>
+        </aside>
+        <div class="desktop-main">
+          <header class="desktop-topbar">
+            <div><h1>${meta.title}</h1><p>${meta.subtitle}</p></div>
+            <div class="desktop-top-actions">
+              <span class="desktop-sync-dot"></span>跨平台同步預約系統
+            </div>
+          </header>
+          <main class="desktop-content">${renderScreen()}</main>
+        </div>
+      </div>
+    `;
+  }
+
+  function desktopPageMeta() {
+    const map = {
+      home: { title: '房間及物品預約系統', subtitle: '共享資源・更高效率・讓預約更簡單' },
+      reserveType: { title: '提交預約', subtitle: '選擇房間或外借物品，開始新的借用申請' },
+      roomBooking: { title: '房間預約', subtitle: '選擇房間、日期、時段及同日使用物品' },
+      roomItems: { title: '同日使用物品', subtitle: '物品只可在預約當日在中心使用' },
+      roomConfirm: { title: '確認房間預約', subtitle: '檢查資料後提交申請' },
+      loanBooking: { title: '外借物品', subtitle: '選擇借用日期及歸還日期' },
+      loanConfirm: { title: '確認外借申請', subtitle: '檢查外借物品及聯絡資料' },
+      query: { title: '資源借用查詢', subtitle: '公開查看哪些房間或物品已被借出及借用日期' },
+      confirmation: { title: '申請已提交', subtitle: '你的申請已送交管理員處理' },
+      my: { title: '資源借用查詢', subtitle: '公開查看資源借用日期' },
+    };
+    return map[state.page] || map.home;
   }
 
   function renderScreen() {
@@ -468,34 +522,25 @@
 
   function renderQueryPage() {
     const q = state.query.trim().toLowerCase();
-    const bookings = getBookings();
-    const filtered = !q ? bookings : bookings.filter(item =>
-      [item.bookingNo, item.title, item.roomName, item.purpose, item.applicantName].filter(Boolean).join(' ').toLowerCase().includes(q)
-    );
+    const visible = getBookings().filter(item => ['已批准', '已歸還'].includes(item.status));
+    const filtered = !q ? visible : visible.filter(item => [item.title, item.roomName].filter(Boolean).join(' ').toLowerCase().includes(q));
     return `
-      ${renderHeader('查詢申請狀態', '輸入編號或關鍵字查詢', 'home')}
-      <section class="card query-card">
+      ${renderHeader('資源借用查詢', '查看已借出的房間／物品及借用日期', 'home')}
+      <section class="card query-card public-query-card">
         <div class="search-row">
-          <input class="input" data-query-input value="${escapeAttr(state.query)}" placeholder="請輸入申請編號 / 關鍵字" />
+          <input class="input" data-query-input value="${escapeAttr(state.query)}" placeholder="搜尋房間／物品名稱" />
           <button class="btn btn-primary" data-search>搜尋</button>
         </div>
       </section>
-      <div class="section-title"><h2>最近申請記錄</h2><small>${filtered.length} 筆</small></div>
-      <div class="stack">
-        ${filtered.length ? filtered.map(renderBookingCard).join('') : '<div class="card empty-state">找不到相關申請記錄</div>'}
+      <div class="section-title"><h2>借用情況</h2><small>${filtered.length} 項</small></div>
+      <div class="stack public-loan-list">
+        ${filtered.length ? filtered.map(renderPublicLoanCard).join('') : '<div class="card empty-state">暫時沒有已借出的房間或物品</div>'}
       </div>
     `;
   }
 
   function renderMyPage() {
-    const bookings = getBookings();
-    return `
-      ${renderHeader('我的申請', '查看已提交之房間及物品申請', 'home')}
-      <div class="section-title"><h2>全部申請</h2><small>${bookings.length} 筆</small></div>
-      <div class="stack">
-        ${bookings.length ? bookings.map(renderBookingCard).join('') : '<div class="card empty-state">暫未有任何申請</div>'}
-      </div>
-    `;
+    return renderQueryPage();
   }
 
   function renderConfirmation() {
@@ -586,21 +631,21 @@
     `;
   }
 
-  function renderBookingCard(booking) {
-    const badgeClass = booking.status === '待審批' ? 'pending' : booking.status === '已批准' ? 'approved' : booking.status === '已歸還' ? 'returned' : 'rejected';
+  function renderPublicLoanCard(booking) {
+    const isLoan = booking.type === 'loan';
+    const dateText = isLoan && booking.returnDate
+      ? `${formatDate(booking.startDate || booking.date)} 至 ${formatDate(booking.returnDate)}`
+      : formatDate(booking.date);
     return `
-      <div class="card list-card">
-        <div class="list-top">
-          <div class="code">${booking.bookingNo}</div>
-          <div class="badge ${badgeClass}">${booking.status}</div>
+      <div class="card list-card public-loan-card">
+        <div class="public-resource-icon">${isLoan ? icons.box : icons.door}</div>
+        <div class="public-resource-info">
+          <span>${isLoan ? '外借物品' : '房間'}</span>
+          <strong>${escapeHtml(booking.title || booking.roomName || '資源')}</strong>
         </div>
-        <div class="meta-grid">
-          <div><span>借用類別</span><strong>${booking.type === 'room' ? '房間' : '外借物品'}</strong></div>
-          <div><span>項目</span><strong>${booking.title}</strong></div>
-          <div><span>日期</span><strong>${formatDate(booking.date)}</strong></div>
-          <div><span>詳情</span><strong>${booking.detail}</strong></div>
-          <div><span>用途</span><strong>${booking.purpose}</strong></div>
-          <div><span>申請人</span><strong>${booking.applicantName || '-'}</strong></div>
+        <div class="public-resource-date">
+          <span>借用日期</span>
+          <strong>${dateText}</strong>
         </div>
       </div>
     `;
@@ -806,7 +851,7 @@
     state.confirmation = { type: 'room', bookingNo };
     state.roomFlow = defaultRoomFlow();
     state.page = 'confirmation';
-    state.currentTab = 'my';
+    state.currentTab = 'home';
     persistForms();
     render();
     toast('房間預約已提交', 'success');
@@ -843,7 +888,7 @@
     state.confirmation = { type: 'loan', bookingNo };
     state.loanFlow = defaultLoanFlow();
     state.page = 'confirmation';
-    state.currentTab = 'my';
+    state.currentTab = 'home';
     persistForms();
     render();
     toast('外借物品申請已提交', 'success');
@@ -856,7 +901,6 @@
         <button class="nav-item ${active === 'home' ? 'active' : ''}" data-tab="home">${icons.home}<span>首頁</span></button>
         <button class="nav-item ${active === 'reserve' ? 'active' : ''}" data-tab="reserve">${icons.calendar}<span>預約</span></button>
         <button class="nav-item ${active === 'query' ? 'active' : ''}" data-tab="query">${icons.search}<span>查詢</span></button>
-        <button class="nav-item ${active === 'my' ? 'active' : ''}" data-tab="my">${icons.user}<span>我的</span></button>
       </nav>
     `;
   }
@@ -864,7 +908,8 @@
   function pageToTab(page) {
     if (['reserveType', 'roomBooking', 'roomItems', 'roomConfirm', 'loanBooking', 'loanConfirm'].includes(page)) return 'reserve';
     if (page === 'query') return 'query';
-    if (page === 'my' || page === 'confirmation') return 'my';
+    if (page === 'my') return 'query';
+    if (page === 'confirmation') return 'home';
     return 'home';
   }
 
