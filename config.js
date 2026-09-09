@@ -5,5 +5,5 @@ window.APP_CONFIG = {
   demoMode: false,
   supabaseUrl: 'https://xdilyyjmuaovafcewins.supabase.co',
   supabasePublishableKey: 'sb_publishable_5jIlH8tGaJKqsrDbrCVJ0Q_OqwC4lLO',
-  adminActivationEmail: 'hoyinwong@skhwc.org.hk'
+  adminActivationEmails: ['hoyinwong@skhwc.org.hk','anthony.wong0206@gmail.com']
 };

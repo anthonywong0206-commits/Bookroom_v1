@@ -617,8 +617,8 @@ ${resourceName(b.resource_id)}｜${b.booking_date}`))return;
   }
 
   function renderLogin(message=''){
-    const activationEmail=String(cfg.adminActivationEmail||'').trim().toLowerCase();
-    app.innerHTML=`<div class="login-shell"><form class="login-card" data-login><h1>管理員登入</h1><p>使用 Supabase 管理員帳戶登入。首次啟用時請同時輸入一次性啟用碼。</p>${message?`<div class="error-box">${esc(message)}</div>`:''}<div class="field"><span>電郵</span><input class="input" type="email" name="email" required autocomplete="username" value="${attr(cfg.adminActivationEmail||'')}"></div><div class="field"><span>密碼</span><input class="input" type="password" name="password" required autocomplete="current-password"></div><div class="field"><span>首次啟用碼（一般登入可留空）</span><input class="input" type="password" name="activation_code" autocomplete="one-time-code" placeholder="首次建立／啟用管理員時輸入"></div><button class="btn btn-primary" type="submit">登入／首次啟用</button><p class="mini">啟用碼只使用一次，不會儲存在網站程式碼。登入入口只設於桌面管理員頁面。</p></form></div>`;
+    const activationEmails=Array.isArray(cfg.adminActivationEmails)?cfg.adminActivationEmails.map(v=>String(v||'').trim().toLowerCase()).filter(Boolean):[String(cfg.adminActivationEmail||'').trim().toLowerCase()].filter(Boolean);
+    app.innerHTML=`<div class="login-shell"><form class="login-card" data-login><h1>管理員登入</h1><p>使用 Supabase 管理員帳戶登入。首次啟用時請同時輸入一次性啟用碼。</p>${message?`<div class="error-box">${esc(message)}</div>`:''}<div class="field"><span>電郵</span><input class="input" type="email" name="email" required autocomplete="username" value="${attr((cfg.adminActivationEmails&&cfg.adminActivationEmails[0])||cfg.adminActivationEmail||'')}"></div><div class="field"><span>密碼</span><input class="input" type="password" name="password" required autocomplete="current-password"></div><div class="field"><span>首次啟用碼（一般登入可留空）</span><input class="input" type="password" name="activation_code" autocomplete="one-time-code" placeholder="首次建立／啟用管理員時輸入"></div><button class="btn btn-primary" type="submit">登入／首次啟用</button><p class="mini">啟用碼只使用一次，不會儲存在網站程式碼。登入入口只設於桌面管理員頁面。</p></form></div>`;
     qs('[data-login]').onsubmit=async e=>{
       e.preventDefault();
       const fd=new FormData(e.currentTarget);
@@ -630,7 +630,7 @@ ${resourceName(b.resource_id)}｜${b.booking_date}`))return;
       let signIn=await supabase.auth.signInWithPassword({email,password});
       if(signIn.error){
         if(!activationCode)return renderLogin('登入失敗。如屬首次啟用，請輸入一次性啟用碼。');
-        if(activationEmail&&email!==activationEmail)return renderLogin('此電郵不在首次管理員啟用名單內。');
+        if(activationEmails.length&&!activationEmails.includes(email))return renderLogin('此電郵不在首次管理員啟用名單內。');
         const signUp=await supabase.auth.signUp({email,password});
         if(signUp.error)return renderLogin('首次啟用失敗：'+signUp.error.message);
         if(!signUp.data.session){
