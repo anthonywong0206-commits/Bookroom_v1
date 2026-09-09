@@ -47,6 +47,7 @@
     organizations: [],
     availability: [],
     publicBookings: [],
+    resourceBlocks: [],
     purposeOptions: [],
     loadingData: true,
     sourceError: '',
@@ -150,6 +151,7 @@
         { id: 'av-2', resource_id: 'room-demo-2', weekday: 2, specific_date: null, date_from: null, date_to: null, start_time: '09:00', end_time: '17:00', active: true },
       ],
       bookings: [],
+      resourceBlocks: [],
       purposeOptions: [
         { id: 'purpose-case', label: '個案', active: true, sort_order: 1 },
         { id: 'purpose-group', label: '小組', active: true, sort_order: 2 },
@@ -169,6 +171,7 @@
     state._allResources = Array.isArray(data.resources) ? data.resources : [];
     state.availability = Array.isArray(data.availability) ? data.availability : [];
     state._allBookings = Array.isArray(data.bookings) ? data.bookings : [];
+    state.resourceBlocks = Array.isArray(data.resourceBlocks) ? data.resourceBlocks : [];
     state.purposeOptions = Array.isArray(data.purposeOptions) ? data.purposeOptions : demoSeed().purposeOptions;
     state.publicBookings = buildDemoPublicBookings(state._allBookings);
   }
@@ -181,11 +184,13 @@
       resources: latest?.resources || state._allResources || [],
       availability: latest?.availability || state.availability,
       bookings: state._allBookings || latest?.bookings || [],
+      resourceBlocks: latest?.resourceBlocks || state.resourceBlocks || [],
       purposeOptions: latest?.purposeOptions || state.purposeOptions || demoSeed().purposeOptions,
     };
     state.organizations = current.organizations;
     state._allResources = current.resources;
     state.availability = current.availability;
+    state.resourceBlocks = current.resourceBlocks || [];
     state.purposeOptions = current.purposeOptions;
     localStorage.setItem(ADMIN_DEMO_KEY, JSON.stringify(current));
     broadcastSync();
@@ -207,25 +212,28 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'organizations' }, () => refreshFromSource(true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'resources' }, () => refreshFromSource(true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'resource_availability' }, () => refreshFromSource(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'resource_blocks' }, () => refreshFromSource(true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'purpose_options' }, () => refreshFromSource(true))
       .subscribe();
   }
 
   async function loadSupabaseSource() {
     const client = await ensureSupabaseClient();
-    const [orgs, resourcesResult, availabilityResult, publicResult, purposeResult] = await Promise.all([
+    const [orgs, resourcesResult, availabilityResult, blocksResult, publicResult, purposeResult] = await Promise.all([
       client.from('organizations').select('*').eq('active', true).order('name'),
       client.from('resources').select('*').eq('active', true).order('type').order('name'),
       client.from('resource_availability').select('*').eq('active', true).order('resource_id'),
+      client.from('resource_blocks').select('resource_id,block_date').order('block_date'),
       client.rpc('get_public_resource_bookings'),
       client.from('purpose_options').select('*').eq('active', true).order('sort_order').order('label'),
     ]);
-    for (const result of [orgs, resourcesResult, availabilityResult, publicResult, purposeResult]) {
+    for (const result of [orgs, resourcesResult, availabilityResult, blocksResult, publicResult, purposeResult]) {
       if (result.error) throw result.error;
     }
     state.organizations = orgs.data || [];
     state._allResources = resourcesResult.data || [];
     state.availability = availabilityResult.data || [];
+    state.resourceBlocks = blocksResult.data || [];
     state.purposeOptions = purposeResult.data || [];
     state.publicBookings = (publicResult.data || []).map(row => ({
       resourceId: row.resource_id,
@@ -308,6 +316,8 @@
 
   function readableError(error) {
     const message = error?.message || error?.details || String(error || '資料同步失敗');
+    if (/RESOURCE_DATE_BLOCKED/i.test(message)) return '所選日期已由管理員設為不可借用，請重新選擇日期';
+    if (/resource_blocks/i.test(message) && /does not exist|schema cache|could not find/i.test(message)) return 'Supabase 尚未套用 v6 借用狀況日曆 SQL';
     if (/get_public_resource_bookings/i.test(message)) return 'Supabase 尚未套用前後台同步 SQL';
     if (/permission denied|row-level security/i.test(message)) return 'Supabase 讀取權限尚未套用同步 SQL';
     return message;
@@ -1129,7 +1139,7 @@
   }
 
   function getRoomSlots(roomId, dateIso) {
-    if (!roomId || !dateIso) return [];
+    if (!roomId || !dateIso || isResourceBlocked(roomId, dateIso)) return [];
     const weekday = new Date(`${dateIso}T12:00:00`).getDay();
     return state.availability
       .filter(rule => rule.resource_id === roomId && rule.active !== false)
@@ -1139,7 +1149,7 @@
   }
 
   function isRoomDateAvailable(roomId, dateIso) {
-    return getRoomSlots(roomId, dateIso).length > 0;
+    return !isResourceBlocked(roomId, dateIso) && getRoomSlots(roomId, dateIso).length > 0;
   }
 
   function availabilityMatchesDate(rule, dateIso, weekday) {
@@ -1156,6 +1166,7 @@
     const returnDate = addDays(dateIso, 3);
     return selected.every(req => {
       const item = loanItems.find(x => x.id === req.resource_id); if (!item) return false;
+      if (dateRangeHasBlock(item.id, dateIso, returnDate)) return false;
       const rules = (state.availability || []).filter(rule => rule.resource_id === item.id && rule.active !== false);
       if (rules.length) {
         const weekday = new Date(`${dateIso}T12:00:00`).getDay();
@@ -1164,6 +1175,22 @@
       const used = (state.publicBookings || []).filter(b => b.resourceId === item.id && b.date <= returnDate && (b.returnDate || b.date) >= dateIso).reduce((sum,b)=>sum+Number(b.quantity||1),0);
       return req.quantity <= Math.max(0, Number(item.stock_quantity || item.max || 1) - used);
     });
+  }
+
+  function isResourceBlocked(resourceId, dateIso) {
+    return (state.resourceBlocks || []).some(block => block.resource_id === resourceId && String(block.block_date) === dateIso);
+  }
+
+  function dateRangeHasBlock(resourceId, startDate, endDate) {
+    let d = new Date(`${startDate}T12:00:00`);
+    const end = new Date(`${endDate}T12:00:00`);
+    let guard = 0;
+    while (d <= end && guard < 370) {
+      if (isResourceBlocked(resourceId, toIsoDate(d))) return true;
+      d.setDate(d.getDate() + 1);
+      guard++;
+    }
+    return false;
   }
 
   function shortTime(value) {
