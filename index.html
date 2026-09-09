@@ -8,7 +8,7 @@
   <title>房間及物品預約系統</title>
   <link rel="icon" href="assets/app-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="styles.css?v=20260909v7" />
+  <link rel="stylesheet" href="styles.css?v=20260909v9" />
 </head>
 <body>
   <div id="app"><div class="boot-screen"><div class="boot-logo">⌚</div><div>正在載入預約系統…</div></div></div>
@@ -20,7 +20,7 @@
     (function () {
       function loadApp() {
         var script = document.createElement('script');
-        script.src = 'app.js?v=20260909v7';
+        script.src = 'app.js?v=20260909v9';
         script.onerror = function () {
           document.getElementById('app').innerHTML = '<div class="boot-screen"><div>前台程式載入失敗，請確認 app.js 已上載。</div></div>';
         };

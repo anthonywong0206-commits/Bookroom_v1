@@ -12,8 +12,8 @@
 
   const seed={
     organizations:[
-      {id:'org-demo-1',name:'社區綜合服務中心',active:true,created_at:new Date().toISOString()},
-      {id:'org-demo-2',name:'樂齡活動中心',active:true,created_at:new Date().toISOString()}
+      {id:'org-demo-1',name:'社區綜合服務中心',access_password:'1234',active:true,created_at:new Date().toISOString()},
+      {id:'org-demo-2',name:'樂齡活動中心',access_password:'1234',active:true,created_at:new Date().toISOString()}
     ],
     resources:[
       {id:'room-demo-1',organization_id:'org-demo-1',type:'room',name:'活動室 1-2',location:'1/F',description:'適合小組及活動',capacity:20,stock_quantity:1,requires_room:false,image_url:null,active:true},
@@ -102,7 +102,7 @@
   }
   async function refreshAll(){
     const [orgs,res,av,bks,blocks,purposes]=await Promise.all([
-      supabase.from('organizations').select('*').order('name'),
+      supabase.from('organizations').select('id,name,active,created_at,updated_at').order('name'),
       supabase.from('resources').select('*').order('type').order('name'),
       supabase.from('resource_availability').select('*').order('resource_id'),
       supabase.from('bookings').select('*').order('created_at',{ascending:false}).limit(1000),
@@ -146,16 +146,18 @@
 
   function organizationsView(){
     const edit=state.organizations.find(x=>x.id===state.editingOrgId)||null;
-    return `${top('機構管理','新增、更改或刪除可使用本系統的機構')}
+    return `${top('機構管理','管理機構及前台登入密碼；不同機構的資源與借用資料會分開顯示')}
       <div class="grid-two">
         <section class="panel"><div class="panel-head"><div><h3>機構列表</h3><p>共 ${state.organizations.length} 個機構</p></div><button class="btn btn-primary" data-new-org>＋ 新增機構</button></div>
-          <div class="table-wrap"><table><thead><tr><th>機構名稱</th><th>狀態</th><th>房間／物品</th><th>操作</th></tr></thead><tbody>
-          ${state.organizations.length?state.organizations.map(org=>`<tr><td><strong>${esc(org.name)}</strong></td><td><span class="tag ${org.active?'green':'gray'}">${org.active?'啟用':'停用'}</span></td><td>${state.resources.filter(r=>r.organization_id===org.id).length}</td><td><div class="row-actions"><button class="btn btn-secondary btn-small" data-edit-org="${org.id}">修改</button><button class="btn btn-danger btn-small" data-delete-org="${org.id}">刪除</button></div></td></tr>`).join(''):`<tr><td colspan="4" class="empty">尚未建立機構</td></tr>`}
+          <div class="table-wrap"><table><thead><tr><th>機構名稱</th><th>前台密碼</th><th>狀態</th><th>房間／物品</th><th>操作</th></tr></thead><tbody>
+          ${state.organizations.length?state.organizations.map(org=>`<tr><td><strong>${esc(org.name)}</strong></td><td><span class="tag blue">已設定</span></td><td><span class="tag ${org.active?'green':'gray'}">${org.active?'啟用':'停用'}</span></td><td>${state.resources.filter(r=>r.organization_id===org.id).length}</td><td><div class="row-actions"><button class="btn btn-secondary btn-small" data-edit-org="${org.id}">修改</button><button class="btn btn-danger btn-small" data-delete-org="${org.id}">刪除</button></div></td></tr>`).join(''):`<tr><td colspan="5" class="empty">尚未建立機構</td></tr>`}
           </tbody></table></div>
         </section>
-        <section class="panel"><div class="panel-head"><div><h3>${edit?'修改機構':'新增機構'}</h3><p>${edit?'更新機構名稱或啟用狀態':'建立新的機構'}</p></div></div>
+        <section class="panel"><div class="panel-head"><div><h3>${edit?'修改機構':'新增機構'}</h3><p>${edit?'可同時更改前台登入密碼；留空即保留原密碼':'新機構必須設定前台登入密碼'}</p></div></div>
           <form data-org-form class="form-card">
             <div class="field"><span>機構名稱 *</span><input class="input" name="name" required maxlength="120" value="${attr(edit?.name||'')}" placeholder="例如：社區綜合服務中心"></div>
+            <div class="field"><span>前台登入密碼 ${edit?'（留空＝不更改）':'*'}</span><input class="input" type="password" name="access_password" ${edit?'':'required'} minlength="4" maxlength="64" autocomplete="new-password" placeholder="至少 4 個字元"></div>
+            <div class="mini" style="margin-top:8px">前台用戶需要先選擇機構並輸入此密碼，才可以預約或查詢該機構資料。</div>
             <label class="checkline" style="margin-top:12px"><input type="checkbox" name="active" ${!edit||edit.active?'checked':''}> 啟用此機構</label>
             <div class="form-actions">${edit?'<button type="button" class="btn btn-secondary" data-cancel-org>取消</button>':''}<button class="btn btn-primary" type="submit">${edit?'儲存修改':'新增機構'}</button></div>
           </form>
@@ -415,19 +417,23 @@
   }
 
   async function saveOrg(e){
-    e.preventDefault(); const fd=new FormData(e.currentTarget); const name=String(fd.get('name')||'').trim(); const active=fd.get('active')==='on';
+    e.preventDefault(); const fd=new FormData(e.currentTarget); const name=String(fd.get('name')||'').trim(); const active=fd.get('active')==='on'; const accessPassword=String(fd.get('access_password')||'');
     if(!name)return toast('請輸入機構名稱','error');
+    if(!state.editingOrgId && accessPassword.length<4)return toast('請設定至少 4 個字元的前台登入密碼','error');
+    if(accessPassword && accessPassword.length<4)return toast('前台登入密碼至少需要 4 個字元','error');
     try{
       if(DEMO){
         const duplicate=state.organizations.some(o=>o.name.toLowerCase()===name.toLowerCase()&&o.id!==state.editingOrgId); if(duplicate)throw new Error('機構名稱已存在');
-        if(state.editingOrgId){const o=state.organizations.find(x=>x.id===state.editingOrgId);Object.assign(o,{name,active});}
-        else state.organizations.push({id:uid('org'),name,active,created_at:new Date().toISOString()}); persistDemo();
+        if(state.editingOrgId){const o=state.organizations.find(x=>x.id===state.editingOrgId);Object.assign(o,{name,active});if(accessPassword)o.access_password=accessPassword;}
+        else state.organizations.push({id:uid('org'),name,access_password:accessPassword,active,created_at:new Date().toISOString()}); persistDemo();
       }else{
         const payload={name,active};
-        const r=state.editingOrgId?await supabase.from('organizations').update(payload).eq('id',state.editingOrgId).select().single():await supabase.from('organizations').insert(payload).select().single();
-        if(r.error)throw r.error; await refreshAll();
+        const r=state.editingOrgId?await supabase.from('organizations').update(payload).eq('id',state.editingOrgId).select('id,name,active,created_at,updated_at').single():await supabase.from('organizations').insert(payload).select('id,name,active,created_at,updated_at').single();
+        if(r.error)throw r.error;
+        if(accessPassword){const pw=await supabase.rpc('admin_set_organization_portal_password',{p_organization_id:r.data.id,p_password:accessPassword});if(pw.error)throw pw.error;}
+        await refreshAll();
       }
-      state.editingOrgId=null; toast('機構已儲存','success'); render();
+      state.editingOrgId=null; toast('機構及前台登入設定已儲存','success'); render();
     }catch(err){toast(errorMessage(err),'error');}
   }
 
@@ -624,7 +630,7 @@ ${resourceName(b.resource_id)}｜${b.booking_date}`))return;
   function addDays(iso,days){const d=new Date(`${iso}T12:00:00`);d.setDate(d.getDate()+Number(days||0));return toIsoDate(d);}
   function todayIso(){return toIsoDate(new Date());}
   function statusLabel(s){return ({pending:'待審批',approved:'已批准',rejected:'已拒絕',completed:'已完成',cancelled:'已取消'})[s]||s||'—';}
-  function errorMessage(err){if(!err)return'未知錯誤';if(typeof err==='string')return err;const m=err.message||err.error_description||err.details||'操作失敗';if(/RESOURCE_DATE_BLOCKED/i.test(m))return'所選日期已設為不可借用，請先解除封鎖。';if(/admin_upsert_booking_record|get_public_resource_busy_periods|update_booking_group_status/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v7 日曆新增／修改預約 SQL。';if(/resource_blocks|admin_update_booking_record|admin_delete_booking_record/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v6 借用狀況日曆 SQL。';if(/row-level security|permission denied/i.test(m))return'資料庫權限不足。請確認登入帳戶在 profiles 表中的 role 為 admin，並執行管理權限 SQL。';if(/duplicate|unique/i.test(m))return'名稱已存在，請使用另一個名稱。';return m;}
+  function errorMessage(err){if(!err)return'未知錯誤';if(typeof err==='string')return err;const m=err.message||err.error_description||err.details||'操作失敗';if(/admin_set_organization_portal_password/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v9 機構登入及資料隔離 SQL。';if(/RESOURCE_DATE_BLOCKED/i.test(m))return'所選日期已設為不可借用，請先解除封鎖。';if(/admin_upsert_booking_record|get_public_resource_busy_periods|update_booking_group_status/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v7 日曆新增／修改預約 SQL。';if(/resource_blocks|admin_update_booking_record|admin_delete_booking_record/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v6 借用狀況日曆 SQL。';if(/row-level security|permission denied/i.test(m))return'資料庫權限不足。請確認登入帳戶在 profiles 表中的 role 為 admin，並執行管理權限 SQL。';if(/duplicate|unique/i.test(m))return'名稱已存在，請使用另一個名稱。';return m;}
   function toast(msg,type=''){const d=document.createElement('div');d.className=`toast ${type}`;d.textContent=msg;toastRoot.appendChild(d);setTimeout(()=>d.remove(),3300);}
   function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
   function attr(s){return esc(s).replace(/"/g,'&quot;');}

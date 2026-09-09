@@ -7,6 +7,7 @@
   const ADMIN_DEMO_KEY = 'rrbs_admin_demo_v4';
   const FORM_KEY = 'rrbs_demo_form_v2';
   const SYNC_CHANNEL = 'rrbs-resource-sync';
+  const PORTAL_SESSION_KEY = 'rrbs_portal_session_v1';
 
   let supabase = null;
   let syncChannel = null;
@@ -55,15 +56,51 @@
     purposeOptions: [],
     loadingData: true,
     sourceError: '',
+    portalAuthenticated: false,
+    portalOrgId: '',
+    portalOrgName: '',
+    portalPassword: '',
   };
 
   init();
 
   async function init() {
     hydrateStored();
+    hydratePortalSession();
     setupSyncListeners();
     await refreshFromSource(false);
     render();
+  }
+
+  function hydratePortalSession() {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(PORTAL_SESSION_KEY) || 'null');
+      if (saved?.orgId && saved?.password) {
+        state.portalOrgId = saved.orgId;
+        state.portalPassword = saved.password;
+        state.portalAuthenticated = true;
+      }
+    } catch (_) {}
+  }
+
+  function savePortalSession() {
+    if (state.portalAuthenticated && state.portalOrgId && state.portalPassword) {
+      sessionStorage.setItem(PORTAL_SESSION_KEY, JSON.stringify({ orgId: state.portalOrgId, password: state.portalPassword }));
+    }
+  }
+
+  function clearPortalSession() {
+    sessionStorage.removeItem(PORTAL_SESSION_KEY);
+    state.portalAuthenticated = false;
+    state.portalOrgId = '';
+    state.portalOrgName = '';
+    state.portalPassword = '';
+    state.page = 'home';
+    state.currentTab = 'home';
+    state.roomFlow = defaultRoomFlow();
+    state.loanFlow = defaultLoanFlow();
+    state.queryResourceId = '';
+    state.querySelectedDate = '';
   }
 
   function defaultRoomFlow() {
@@ -142,8 +179,8 @@
   function demoSeed() {
     return {
       organizations: [
-        { id: 'org-demo-1', name: '社區綜合服務中心', active: true, created_at: new Date().toISOString() },
-        { id: 'org-demo-2', name: '樂齡活動中心', active: true, created_at: new Date().toISOString() },
+        { id: 'org-demo-1', name: '社區綜合服務中心', access_password: '1234', active: true, created_at: new Date().toISOString() },
+        { id: 'org-demo-2', name: '樂齡活動中心', access_password: '1234', active: true, created_at: new Date().toISOString() },
       ],
       resources: [
         { id: 'room-demo-1', organization_id: 'org-demo-1', type: 'room', name: '活動室 1-2', location: '1/F', description: '適合小組及活動', capacity: 20, stock_quantity: 1, requires_room: false, image_url: null, active: true },
@@ -172,11 +209,29 @@
       data = demoSeed();
       localStorage.setItem(ADMIN_DEMO_KEY, JSON.stringify(data));
     }
-    state.organizations = Array.isArray(data.organizations) ? data.organizations : [];
-    state._allResources = Array.isArray(data.resources) ? data.resources : [];
-    state.availability = Array.isArray(data.availability) ? data.availability : [];
-    state._allBookings = Array.isArray(data.bookings) ? data.bookings : [];
-    state.resourceBlocks = Array.isArray(data.resourceBlocks) ? data.resourceBlocks : [];
+    if (Array.isArray(data.organizations)) {
+      data.organizations.forEach(org => { if (!org.access_password) org.access_password = '1234'; });
+    }
+    state.organizations = (Array.isArray(data.organizations) ? data.organizations : []).filter(org => org.active !== false);
+    if (!state.portalAuthenticated) {
+      state._allResources = []; state.availability = []; state._allBookings = []; state.resourceBlocks = []; state.publicBookings = []; state.busyPeriods = [];
+      state.purposeOptions = Array.isArray(data.purposeOptions) ? data.purposeOptions : demoSeed().purposeOptions;
+      return;
+    }
+    const org = state.organizations.find(item => item.id === state.portalOrgId);
+    if (!org || String(org.access_password || '1234') !== String(state.portalPassword || '')) {
+      clearPortalSession();
+      state._allResources = []; state.availability = []; state._allBookings = []; state.resourceBlocks = []; state.publicBookings = []; state.busyPeriods = [];
+      return;
+    }
+    state.portalOrgName = org.name;
+    const allResources = Array.isArray(data.resources) ? data.resources : [];
+    const orgResources = allResources.filter(resource => resource.organization_id === state.portalOrgId);
+    const ids = new Set(orgResources.map(resource => resource.id));
+    state._allResources = orgResources;
+    state.availability = (Array.isArray(data.availability) ? data.availability : []).filter(row => ids.has(row.resource_id));
+    state._allBookings = (Array.isArray(data.bookings) ? data.bookings : []).filter(row => ids.has(row.resource_id));
+    state.resourceBlocks = (Array.isArray(data.resourceBlocks) ? data.resourceBlocks : []).filter(row => ids.has(row.resource_id));
     state.purposeOptions = Array.isArray(data.purposeOptions) ? data.purposeOptions : demoSeed().purposeOptions;
     state.publicBookings = buildDemoPublicBookings(state._allBookings);
     state.busyPeriods = buildDemoBusyPeriods(state._allBookings);
@@ -185,20 +240,11 @@
   function saveDemoSource() {
     let latest = null;
     try { latest = JSON.parse(localStorage.getItem(ADMIN_DEMO_KEY) || 'null'); } catch (_) {}
-    const current = {
-      organizations: latest?.organizations || state.organizations,
-      resources: latest?.resources || state._allResources || [],
-      availability: latest?.availability || state.availability,
-      bookings: state._allBookings || latest?.bookings || [],
-      resourceBlocks: latest?.resourceBlocks || state.resourceBlocks || [],
-      purposeOptions: latest?.purposeOptions || state.purposeOptions || demoSeed().purposeOptions,
-    };
-    state.organizations = current.organizations;
-    state._allResources = current.resources;
-    state.availability = current.availability;
-    state.resourceBlocks = current.resourceBlocks || [];
-    state.purposeOptions = current.purposeOptions;
-    localStorage.setItem(ADMIN_DEMO_KEY, JSON.stringify(current));
+    latest = latest || demoSeed();
+    const orgResourceIds = new Set((latest.resources || []).filter(r => r.organization_id === state.portalOrgId).map(r => r.id));
+    const foreignBookings = (latest.bookings || []).filter(b => !orgResourceIds.has(b.resource_id));
+    latest.bookings = [...foreignBookings, ...(state._allBookings || [])];
+    localStorage.setItem(ADMIN_DEMO_KEY, JSON.stringify(latest));
     broadcastSync();
   }
 
@@ -226,45 +272,39 @@
 
   async function loadSupabaseSource() {
     const client = await ensureSupabaseClient();
-    const [orgs, resourcesResult, availabilityResult, blocksResult, publicResult, busyResult, purposeResult] = await Promise.all([
-      client.from('organizations').select('*').eq('active', true).order('name'),
-      client.from('resources').select('*').eq('active', true).order('type').order('name'),
-      client.from('resource_availability').select('*').eq('active', true).order('resource_id'),
-      client.from('resource_blocks').select('resource_id,block_date').order('block_date'),
-      client.rpc('get_public_resource_bookings'),
-      client.rpc('get_public_resource_busy_periods'),
-      client.from('purpose_options').select('*').eq('active', true).order('sort_order').order('label'),
-    ]);
-    for (const result of [orgs, resourcesResult, availabilityResult, blocksResult, publicResult, busyResult, purposeResult]) {
-      if (result.error) throw result.error;
-    }
+    const orgs = await client.rpc('get_portal_organizations');
+    if (orgs.error) throw orgs.error;
     state.organizations = orgs.data || [];
-    state._allResources = resourcesResult.data || [];
-    state.availability = availabilityResult.data || [];
-    state.resourceBlocks = blocksResult.data || [];
-    state.purposeOptions = purposeResult.data || [];
-    state.publicBookings = (publicResult.data || []).map(row => ({
-      resourceId: row.resource_id,
-      title: row.resource_name,
-      type: row.resource_type === 'item' ? 'loan' : 'room',
-      date: row.booking_date,
-      returnDate: row.loan_end_date || row.booking_date,
-      status: row.status || 'approved',
-      quantity: Number(row.quantity || 1),
+    if (!state.portalAuthenticated) {
+      state._allResources = []; state.availability = []; state.resourceBlocks = []; state.publicBookings = []; state.busyPeriods = []; state.purposeOptions = [];
+      return;
+    }
+    const result = await client.rpc('get_organization_portal_data', {
+      p_organization_id: state.portalOrgId,
+      p_password: state.portalPassword,
+    });
+    if (result.error) {
+      if (/INVALID_ORGANIZATION_PASSWORD|ORGANIZATION_NOT_AVAILABLE/i.test(result.error.message || '')) clearPortalSession();
+      throw result.error;
+    }
+    const payload = result.data || {};
+    state.portalOrgName = payload.organization?.name || state.organizations.find(o => o.id === state.portalOrgId)?.name || '';
+    state._allResources = payload.resources || [];
+    state.availability = payload.availability || [];
+    state.resourceBlocks = payload.resource_blocks || [];
+    state.purposeOptions = payload.purpose_options || [];
+    state.publicBookings = (payload.public_bookings || []).map(row => ({
+      resourceId: row.resource_id, title: row.resource_name, type: row.resource_type === 'item' ? 'loan' : 'room',
+      date: row.booking_date, returnDate: row.loan_end_date || row.booking_date, status: row.status || 'approved', quantity: Number(row.quantity || 1),
     }));
-    state.busyPeriods = (busyResult.data || []).map(row => ({
-      resourceId: row.resource_id,
-      date: row.booking_date,
-      returnDate: row.loan_end_date || row.booking_date,
-      startTime: shortTime(row.start_time),
-      endTime: shortTime(row.end_time),
-      quantity: Number(row.quantity || 1),
+    state.busyPeriods = (payload.busy_periods || []).map(row => ({
+      resourceId: row.resource_id, date: row.booking_date, returnDate: row.loan_end_date || row.booking_date,
+      startTime: shortTime(row.start_time), endTime: shortTime(row.end_time), quantity: Number(row.quantity || 1),
     }));
   }
 
   function rebuildCatalog() {
-    const activeOrgIds = new Set(state.organizations.filter(org => org.active !== false).map(org => org.id));
-    const resources = (state._allResources || []).filter(resource => resource.active !== false && activeOrgIds.has(resource.organization_id));
+    const resources = (state._allResources || []).filter(resource => resource.active !== false && resource.organization_id === state.portalOrgId);
     rooms = resources.filter(resource => resource.type === 'room').map(resource => ({
       ...resource,
       capacity: Number(resource.capacity || 1),
@@ -353,6 +393,10 @@
 
   function readableError(error) {
     const message = error?.message || error?.details || String(error || '資料同步失敗');
+    if (/get_portal_organizations|get_organization_portal_data|verify_organization_portal|submit_organization_/i.test(message) && /does not exist|schema cache|could not find/i.test(message)) return 'Supabase 尚未套用 v9 機構登入及資料隔離 SQL';
+    if (/INVALID_ORGANIZATION_PASSWORD/i.test(message)) return '機構密碼不正確';
+    if (/ORGANIZATION_NOT_AVAILABLE/i.test(message)) return '此機構目前未開放使用';
+    if (/ORG_RESOURCE_MISMATCH/i.test(message)) return '所選資源不屬於目前登入機構';
     if (/RESOURCE_DATE_BLOCKED/i.test(message)) return '所選日期已由管理員設為不可借用，請重新選擇日期';
     if (/get_public_resource_busy_periods|admin_upsert_booking_record/i.test(message) && /does not exist|schema cache|could not find/i.test(message)) return 'Supabase 尚未套用 v7 預約流程／日曆管理 SQL';
     if (/resource_blocks/i.test(message) && /does not exist|schema cache|could not find/i.test(message)) return 'Supabase 尚未套用 v6 借用狀況日曆 SQL';
@@ -364,12 +408,65 @@
   function render() {
     app.innerHTML = `
       <div class="app-shell">
-        ${renderScreen()}
+        ${state.portalAuthenticated ? renderScreen() : renderAccessGate()}
       </div>
-      ${renderNav()}
+      ${state.portalAuthenticated ? renderNav() : ''}
     `;
     bindCommonEvents();
     persistForms();
+  }
+
+  function renderAccessGate() {
+    const options = state.organizations.map(org => `<option value="${escapeAttr(org.id)}">${escapeHtml(org.name)}</option>`).join('');
+    return `
+      <div class="portal-gate">
+        <div class="portal-gate-card card">
+          <div class="brand portal-gate-brand"><div class="brand-logo">${icons.calendar}</div><div><div class="brand-title">房間及物品預約系統</div><div class="brand-subtitle">請先登入所屬機構</div></div></div>
+          <div class="portal-gate-copy">為確保不同機構的房間、物品及借用資料互相分隔，請選擇所屬機構並輸入密碼。</div>
+          ${state.sourceError ? `<div class="portal-gate-error">${escapeHtml(state.sourceError)}</div>` : ''}
+          <form class="portal-login-form" data-portal-login>
+            <label class="field-label">所屬機構 *</label>
+            <select class="input" name="organization_id" required><option value="">請選擇機構</option>${options}</select>
+            <label class="field-label">機構密碼 *</label>
+            <input class="input" type="password" name="password" required autocomplete="current-password" placeholder="請輸入機構密碼">
+            <button class="btn btn-primary btn-block" type="submit">進入預約系統</button>
+          </form>
+          <div class="portal-gate-note">如忘記密碼，請向所屬機構職員查詢。</div>
+          <a class="desktop-admin-link portal-admin-link" href="admin.html">管理員登入</a>
+        </div>
+      </div>`;
+  }
+
+  async function loginPortal(e) {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const orgId = String(fd.get('organization_id') || '');
+    const password = String(fd.get('password') || '');
+    if (!orgId || !password) return toast('請選擇機構並輸入密碼', 'error');
+    try {
+      if (DEMO) {
+        let data = null; try { data = JSON.parse(localStorage.getItem(ADMIN_DEMO_KEY) || 'null'); } catch (_) {}
+        data = data || demoSeed();
+        const org = (data.organizations || []).find(o => o.id === orgId && o.active !== false);
+        if (!org || String(org.access_password || '1234') !== password) throw new Error('INVALID_ORGANIZATION_PASSWORD');
+      } else {
+        const client = await ensureSupabaseClient();
+        const result = await client.rpc('verify_organization_portal', { p_organization_id: orgId, p_password: password });
+        if (result.error) throw result.error;
+        if (!result.data) throw new Error('INVALID_ORGANIZATION_PASSWORD');
+      }
+      state.portalOrgId = orgId; state.portalPassword = password; state.portalAuthenticated = true;
+      state.portalOrgName = state.organizations.find(o => o.id === orgId)?.name || '';
+      savePortalSession();
+      await refreshFromSource(false);
+      state.page = 'home'; state.currentTab = 'home';
+      render();
+      toast(`已進入${state.portalOrgName ? '「' + state.portalOrgName + '」' : ''}`, 'success');
+    } catch (error) {
+      clearPortalSession();
+      state.sourceError = readableError(error);
+      render();
+    }
   }
 
   function renderScreen() {
@@ -395,7 +492,7 @@
             <div class="brand-subtitle">${subtitle}</div>
           </div>
         </div>
-        ${backTo ? `<button class="header-action" data-back="${backTo}">${icons.back}</button>` : `<div class="header-actions-wrap"><a class="desktop-admin-link" href="admin.html">管理員登入</a><button class="header-action">${icons.bell}</button></div>`}
+        ${backTo ? `<button class="header-action" data-back="${backTo}">${icons.back}</button>` : `<div class="header-actions-wrap"><span class="portal-org-chip">${escapeHtml(state.portalOrgName || '')}</span><a class="desktop-admin-link" href="admin.html">管理員登入</a><button class="header-action portal-logout" data-portal-logout title="離開機構">登出</button></div>`}
       </div>
     `;
   }
@@ -870,6 +967,13 @@
   }
 
   function bindCommonEvents() {
+    const portalLogin = document.querySelector('[data-portal-login]');
+    if (portalLogin) portalLogin.addEventListener('submit', loginPortal);
+    document.querySelectorAll('[data-portal-logout]').forEach(btn => btn.addEventListener('click', async () => {
+      clearPortalSession();
+      await refreshFromSource(false);
+      render();
+    }));
     document.querySelectorAll('[data-nav-page]').forEach(btn => {
       btn.addEventListener('click', () => {
         state.page = btn.dataset.navPage;
@@ -1176,7 +1280,9 @@
     const client = await ensureSupabaseClient();
     const durationMinutes = roomDurationMinutes(f);
     const endTime = addMinutesToTime(f.startTime, durationMinutes);
-    const { data, error } = await client.rpc('submit_public_room_request', {
+    const { data, error } = await client.rpc('submit_organization_room_request', {
+      p_organization_id: state.portalOrgId,
+      p_password: state.portalPassword,
       p_room_resource_id: room.id,
       p_booking_date: f.date,
       p_slots: [{ start_time: f.startTime, end_time: endTime }],
@@ -1246,7 +1352,9 @@
 
   async function createSupabaseLoanRequest(f, items) {
     const client = await ensureSupabaseClient();
-    const { data, error } = await client.rpc('submit_public_loan_request', {
+    const { data, error } = await client.rpc('submit_organization_loan_request', {
+      p_organization_id: state.portalOrgId,
+      p_password: state.portalPassword,
       p_start_date: f.startDate,
       p_return_date: f.returnDate,
       p_items: items,
@@ -1270,6 +1378,7 @@
   }
 
   function renderNav() {
+    if (!state.portalAuthenticated) return '';
     const active = state.currentTab;
     return `
       <nav class="navbar">
