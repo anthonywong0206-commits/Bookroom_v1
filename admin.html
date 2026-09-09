@@ -13,19 +13,38 @@
   </style>
 </head>
 <body>
-  <div id="app"><div class="boot-screen"><div class="boot-logo">⌚</div><div>正在載入管理員後台…</div></div></div>
-  <div id="modal-root"></div>
+  <div id="app"><div class="boot-screen"><div><div class="boot-logo">⌚</div><div>正在載入管理員後台…</div></div></div></div>
   <div id="toast-root" class="toast-root" aria-live="polite"></div>
   <script src="config.js"></script>
   <script>
-    if (window.matchMedia('(min-width: 900px)').matches) {
-      const script = document.createElement('script');
-      script.src = 'admin-app.js';
-      script.defer = true;
-      document.body.appendChild(script);
-    } else {
-      document.getElementById('app').innerHTML = '<div class="desktop-only-admin-message"><div><h1>管理員後台只於網頁版顯示</h1><p>請使用電腦瀏覽器，或把瀏覽器切換至桌面網站模式後再登入管理員後台。</p></div></div>';
-    }
+    (function () {
+      if (!window.matchMedia('(min-width: 900px)').matches) {
+        document.getElementById('app').innerHTML = '<div class="desktop-only-admin-message"><div><h1>管理員後台只於網頁版顯示</h1><p>請使用電腦瀏覽器，或把瀏覽器切換至桌面網站模式後再登入管理員後台。</p></div></div>';
+        return;
+      }
+
+      function loadAdminApp() {
+        var adminScript = document.createElement('script');
+        adminScript.src = 'admin-app.js';
+        adminScript.onerror = function () {
+          document.getElementById('app').innerHTML = '<div class="desktop-only-admin-message"><div><h1>管理員程式載入失敗</h1><p>請確認 admin-app.js 已上載到網站根目錄，然後重新整理頁面。</p></div></div>';
+        };
+        document.body.appendChild(adminScript);
+      }
+
+      if ((window.APP_CONFIG || {}).demoMode !== false) {
+        loadAdminApp();
+        return;
+      }
+
+      var supabaseScript = document.createElement('script');
+      supabaseScript.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+      supabaseScript.onload = loadAdminApp;
+      supabaseScript.onerror = function () {
+        document.getElementById('app').innerHTML = '<div class="desktop-only-admin-message"><div><h1>Supabase 程式庫載入失敗</h1><p>請檢查網絡連線後重新整理頁面。</p></div></div>';
+      };
+      document.head.appendChild(supabaseScript);
+    })();
   </script>
 </body>
 </html>

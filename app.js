@@ -1,7 +1,6 @@
 (function () {
   const app = document.getElementById('app');
   const toastRoot = document.getElementById('toast-root');
-  const DESKTOP_MEDIA = window.matchMedia('(min-width: 900px)');
 
   const STORAGE_KEY = 'rrbs_demo_bookings_v2';
   const FORM_KEY = 'rrbs_demo_form_v2';
@@ -63,7 +62,6 @@
 
   function init() {
     hydrateStored();
-    DESKTOP_MEDIA.addEventListener?.('change', render);
     render();
   }
 
@@ -175,61 +173,14 @@
   }
 
   function render() {
-    if (DESKTOP_MEDIA.matches) {
-      app.innerHTML = renderDesktopShell();
-    } else {
-      app.innerHTML = `
-        <div class="app-shell mobile-public">
-          ${renderScreen()}
-        </div>
-        ${renderNav()}
-      `;
-    }
+    app.innerHTML = `
+      <div class="app-shell">
+        ${renderScreen()}
+      </div>
+      ${renderNav()}
+    `;
     bindCommonEvents();
     persistForms();
-  }
-
-  function renderDesktopShell() {
-    const meta = desktopPageMeta();
-    return `
-      <div class="desktop-public desktop-big-button-ui">
-        <header class="desktop-simple-header">
-          <button class="desktop-logo-button" data-nav-page="home" aria-label="返回首頁">
-            <img src="assets/app-icon.svg" alt="">
-            <span><strong>房間及物品預約系統</strong><small>Room & Resource Booking</small></span>
-          </button>
-          <nav class="desktop-simple-nav" aria-label="主要導覽">
-            <button class="${state.currentTab === 'home' ? 'active' : ''}" data-nav-page="home">${icons.home}<span>首頁</span></button>
-            <button class="${state.currentTab === 'reserve' ? 'active' : ''}" data-nav-page="reserveType">${icons.calendar}<span>預約</span></button>
-            <button class="${state.currentTab === 'query' ? 'active' : ''}" data-nav-page="query">${icons.search}<span>查詢</span></button>
-          </nav>
-          <a class="desktop-admin-entry" href="admin.html">${icons.user}<span>管理員登入</span></a>
-        </header>
-        <main class="desktop-big-main">
-          <div class="desktop-page-heading">
-            <h1>${meta.title}</h1>
-            <p>${meta.subtitle}</p>
-          </div>
-          <div class="desktop-content desktop-action-content">${renderScreen()}</div>
-        </main>
-      </div>
-    `;
-  }
-
-  function desktopPageMeta() {
-    const map = {
-      home: { title: '房間及物品預約系統', subtitle: '共享資源・更高效率・讓預約更簡單' },
-      reserveType: { title: '提交預約', subtitle: '選擇房間或外借物品，開始新的借用申請' },
-      roomBooking: { title: '房間預約', subtitle: '選擇房間、日期、時段及同日使用物品' },
-      roomItems: { title: '同日使用物品', subtitle: '物品只可在預約當日在中心使用' },
-      roomConfirm: { title: '確認房間預約', subtitle: '檢查資料後提交申請' },
-      loanBooking: { title: '外借物品', subtitle: '選擇借用日期及歸還日期' },
-      loanConfirm: { title: '確認外借申請', subtitle: '檢查外借物品及聯絡資料' },
-      query: { title: '資源借用查詢', subtitle: '公開查看哪些房間或物品已被借出及借用日期' },
-      confirmation: { title: '申請已提交', subtitle: '你的申請已送交管理員處理' },
-      my: { title: '資源借用查詢', subtitle: '公開查看資源借用日期' },
-    };
-    return map[state.page] || map.home;
   }
 
   function renderScreen() {
@@ -255,7 +206,7 @@
             <div class="brand-subtitle">${subtitle}</div>
           </div>
         </div>
-        ${backTo ? `<button class="header-action" data-back="${backTo}">${icons.back}</button>` : `<button class="header-action">${icons.bell}</button>`}
+        ${backTo ? `<button class="header-action" data-back="${backTo}">${icons.back}</button>` : `<div class="header-actions-wrap"><a class="desktop-admin-link" href="admin.html">管理員登入</a><button class="header-action">${icons.bell}</button></div>`}
       </div>
     `;
   }
@@ -517,25 +468,49 @@
 
   function renderQueryPage() {
     const q = state.query.trim().toLowerCase();
-    const visible = getBookings().filter(item => ['已批准', '已歸還'].includes(item.status));
-    const filtered = !q ? visible : visible.filter(item => [item.title, item.roomName].filter(Boolean).join(' ').toLowerCase().includes(q));
+    const bookings = getBookings().filter(item => ['已批准', '已歸還', 'approved', 'completed'].includes(item.status));
+    const filtered = !q ? bookings : bookings.filter(item =>
+      [item.title, item.roomName, ...(item.loanItems || []).map(x => x.name)].filter(Boolean).join(' ').toLowerCase().includes(q)
+    );
     return `
-      ${renderHeader('資源借用查詢', '查看已借出的房間／物品及借用日期', 'home')}
-      <section class="card query-card public-query-card">
+      ${renderHeader('查詢借用情況', '查看已借出的房間及物品', 'home')}
+      <section class="card query-card">
         <div class="search-row">
-          <input class="input" data-query-input value="${escapeAttr(state.query)}" placeholder="搜尋房間／物品名稱" />
+          <input class="input" data-query-input value="${escapeAttr(state.query)}" placeholder="輸入房間／物品名稱" />
           <button class="btn btn-primary" data-search>搜尋</button>
         </div>
       </section>
       <div class="section-title"><h2>借用情況</h2><small>${filtered.length} 項</small></div>
-      <div class="stack public-loan-list">
-        ${filtered.length ? filtered.map(renderPublicLoanCard).join('') : '<div class="card empty-state">暫時沒有已借出的房間或物品</div>'}
+      <div class="stack">
+        ${filtered.length ? filtered.map(renderPublicBookingCard).join('') : '<div class="card empty-state">目前沒有相關借用記錄</div>'}
+      </div>
+    `;
+  }
+
+  function renderPublicBookingCard(booking) {
+    const isLoan = booking.type === 'loan';
+    const resourceTitle = booking.title || booking.roomName || '資源';
+    const dateText = isLoan && booking.returnDate && booking.returnDate !== booking.date
+      ? `${formatDate(booking.date)} 至 ${formatDate(booking.returnDate)}`
+      : formatDate(booking.date);
+    return `
+      <div class="card list-card public-loan-card">
+        <div class="public-resource-type">${isLoan ? '外借物品' : '房間'}</div>
+        <div class="public-resource-name">${escapeHtml(resourceTitle)}</div>
+        <div class="public-resource-date"><span>借用日期</span><strong>${dateText}</strong></div>
       </div>
     `;
   }
 
   function renderMyPage() {
-    return renderQueryPage();
+    const bookings = getBookings();
+    return `
+      ${renderHeader('我的申請', '查看已提交之房間及物品申請', 'home')}
+      <div class="section-title"><h2>全部申請</h2><small>${bookings.length} 筆</small></div>
+      <div class="stack">
+        ${bookings.length ? bookings.map(renderBookingCard).join('') : '<div class="card empty-state">暫未有任何申請</div>'}
+      </div>
+    `;
   }
 
   function renderConfirmation() {
@@ -626,21 +601,21 @@
     `;
   }
 
-  function renderPublicLoanCard(booking) {
-    const isLoan = booking.type === 'loan';
-    const dateText = isLoan && booking.returnDate
-      ? `${formatDate(booking.startDate || booking.date)} 至 ${formatDate(booking.returnDate)}`
-      : formatDate(booking.date);
+  function renderBookingCard(booking) {
+    const badgeClass = booking.status === '待審批' ? 'pending' : booking.status === '已批准' ? 'approved' : booking.status === '已歸還' ? 'returned' : 'rejected';
     return `
-      <div class="card list-card public-loan-card">
-        <div class="public-resource-icon">${isLoan ? icons.box : icons.door}</div>
-        <div class="public-resource-info">
-          <span>${isLoan ? '外借物品' : '房間'}</span>
-          <strong>${escapeHtml(booking.title || booking.roomName || '資源')}</strong>
+      <div class="card list-card">
+        <div class="list-top">
+          <div class="code">${booking.bookingNo}</div>
+          <div class="badge ${badgeClass}">${booking.status}</div>
         </div>
-        <div class="public-resource-date">
-          <span>借用日期</span>
-          <strong>${dateText}</strong>
+        <div class="meta-grid">
+          <div><span>借用類別</span><strong>${booking.type === 'room' ? '房間' : '外借物品'}</strong></div>
+          <div><span>項目</span><strong>${booking.title}</strong></div>
+          <div><span>日期</span><strong>${formatDate(booking.date)}</strong></div>
+          <div><span>詳情</span><strong>${booking.detail}</strong></div>
+          <div><span>用途</span><strong>${booking.purpose}</strong></div>
+          <div><span>申請人</span><strong>${booking.applicantName || '-'}</strong></div>
         </div>
       </div>
     `;
@@ -846,7 +821,7 @@
     state.confirmation = { type: 'room', bookingNo };
     state.roomFlow = defaultRoomFlow();
     state.page = 'confirmation';
-    state.currentTab = 'home';
+    state.currentTab = 'query';
     persistForms();
     render();
     toast('房間預約已提交', 'success');
@@ -883,7 +858,7 @@
     state.confirmation = { type: 'loan', bookingNo };
     state.loanFlow = defaultLoanFlow();
     state.page = 'confirmation';
-    state.currentTab = 'home';
+    state.currentTab = 'query';
     persistForms();
     render();
     toast('外借物品申請已提交', 'success');
@@ -903,8 +878,7 @@
   function pageToTab(page) {
     if (['reserveType', 'roomBooking', 'roomItems', 'roomConfirm', 'loanBooking', 'loanConfirm'].includes(page)) return 'reserve';
     if (page === 'query') return 'query';
-    if (page === 'my') return 'query';
-    if (page === 'confirmation') return 'home';
+    if (page === 'my' || page === 'confirmation') return 'my';
     return 'home';
   }
 
