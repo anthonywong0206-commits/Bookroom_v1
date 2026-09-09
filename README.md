@@ -25,3 +25,7 @@ supabase/20260909_v7_calendar_room_duration.sql
 
 ## Demo Mode
 `demoMode: true` 時不需執行 SQL，所有示範資料儲存在瀏覽器 localStorage。
+
+## v8：前台借用情況日曆
+
+「查詢借用情況」已改成先點選房間／物品，再以月曆顯示可借狀況：綠色空位、紅色已借用、灰色不可借用／未開放。公開頁面只顯示資源及借用狀況，不顯示申請者私人資料。詳見 `UPDATE_V8.md`。

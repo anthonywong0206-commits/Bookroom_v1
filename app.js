@@ -41,6 +41,9 @@
     roomMonthOffset: 0,
     itemMonthOffset: 0,
     query: '',
+    queryResourceId: '',
+    queryMonthOffset: 0,
+    querySelectedDate: '',
     roomFlow: defaultRoomFlow(),
     loanFlow: defaultLoanFlow(),
     confirmation: null,
@@ -276,6 +279,12 @@
       state.roomFlow.customMinutes = 90;
       state.roomFlow.startTime = '';
       state.roomFlow.items = {};
+    }
+    const queryIds = new Set([...rooms, ...centerUseItems].map(resource => resource.id));
+    if (state.queryResourceId && !queryIds.has(state.queryResourceId)) {
+      state.queryResourceId = '';
+      state.querySelectedDate = '';
+      state.queryMonthOffset = 0;
     }
   }
 
@@ -614,39 +623,133 @@
   }
 
   function renderQueryPage() {
-    const q = state.query.trim().toLowerCase();
-    const bookings = state.publicBookings || [];
-    const filtered = !q ? bookings : bookings.filter(item =>
-      [item.title, item.roomName, ...(item.loanItems || []).map(x => x.name)].filter(Boolean).join(' ').toLowerCase().includes(q)
-    );
+    const resources = queryResources();
+    const selected = resources.find(resource => resource.id === state.queryResourceId) || null;
+    const roomResources = resources.filter(resource => resource.type === 'room');
+    const itemResources = resources.filter(resource => resource.type === 'item');
     return `
-      ${renderHeader('查詢借用情況', '查看已借出的房間及物品', 'home')}
-      <section class="card query-card">
-        <div class="search-row">
-          <input class="input" data-query-input value="${escapeAttr(state.query)}" placeholder="輸入房間／物品名稱" />
-          <button class="btn btn-primary" data-search>搜尋</button>
-        </div>
+      ${renderHeader('查詢借用情況', '選擇房間或物品查看月曆狀況', 'home')}
+      <section class="card query-calendar-shell">
+        <div class="section-title query-section-heading"><h2>1. 選擇查詢項目</h2><small>${resources.length} 項資源</small></div>
+        ${resources.length ? `
+          ${roomResources.length ? `<div class="query-resource-section"><div class="query-resource-label">房間</div><div class="query-resource-grid">${roomResources.map(renderQueryResourceCard).join('')}</div></div>` : ''}
+          ${itemResources.length ? `<div class="query-resource-section"><div class="query-resource-label">物品</div><div class="query-resource-grid">${itemResources.map(renderQueryResourceCard).join('')}</div></div>` : ''}
+        ` : '<div class="empty-state">目前沒有可供查詢的房間或物品</div>'}
       </section>
-      <div class="section-title"><h2>借用情況</h2><small>${filtered.length} 項</small></div>
-      <div class="stack">
-        ${filtered.length ? filtered.map(renderPublicBookingCard).join('') : '<div class="card empty-state">目前沒有相關借用記錄</div>'}
-      </div>
+      ${selected ? `
+        <section class="card query-calendar-shell query-calendar-result">
+          <div class="query-calendar-title-row">
+            <div>
+              <div class="query-resource-label">${selected.type === 'room' ? '房間' : '物品'}</div>
+              <h2>${escapeHtml(selected.name)}</h2>
+              <div class="helper">${escapeHtml(selected.organizationName || '')}${selected.location ? `・${escapeHtml(selected.location)}` : ''}</div>
+            </div>
+            <div class="query-calendar-legend">
+              <span><i class="query-legend-dot green"></i>空位</span>
+              <span><i class="query-legend-dot red"></i>已借用</span>
+              <span><i class="query-legend-dot gray"></i>不可借用</span>
+            </div>
+          </div>
+          ${renderPublicStatusCalendar(selected)}
+          ${state.querySelectedDate ? renderPublicDateStatus(selected, state.querySelectedDate) : '<div class="query-calendar-hint">點擊日曆日期查看當日狀況</div>'}
+        </section>
+      ` : '<div class="card query-calendar-prompt">請先點選上方房間或物品</div>'}
     `;
   }
 
-  function renderPublicBookingCard(booking) {
-    const isLoan = booking.type === 'loan';
-    const resourceTitle = booking.title || booking.roomName || '資源';
-    const dateText = isLoan && booking.returnDate && booking.returnDate !== booking.date
-      ? `${formatDate(booking.date)} 至 ${formatDate(booking.returnDate)}`
-      : formatDate(booking.date);
-    return `
-      <div class="card list-card public-loan-card">
-        <div class="public-resource-type">${isLoan ? '外借物品' : '房間'}</div>
-        <div class="public-resource-name">${escapeHtml(resourceTitle)}</div>
-        <div class="public-resource-date"><span>借用日期</span><strong>${dateText}</strong></div>
-      </div>
-    `;
+  function queryResources() {
+    return [...rooms, ...centerUseItems].sort((a,b) => {
+      if (a.type !== b.type) return a.type === 'room' ? -1 : 1;
+      return String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hant');
+    });
+  }
+
+  function renderQueryResourceCard(resource) {
+    const selected = state.queryResourceId === resource.id;
+    const visual = resource.image_url
+      ? `<div class="query-resource-thumb"><img src="${escapeAttr(resource.image_url)}" alt="${escapeAttr(resource.name)}"></div>`
+      : `<div class="query-resource-thumb placeholder">${resource.type === 'room' ? icons.door : icons[resource.icon || 'kit']}</div>`;
+    return `<button class="query-resource-card ${selected ? 'selected' : ''}" data-query-resource="${escapeAttr(resource.id)}">${visual}<div class="query-resource-copy"><strong>${escapeHtml(resource.name)}</strong><span>${escapeHtml(resource.organizationName || '')}</span></div>${selected ? '<span class="query-selected-check">✓</span>' : ''}</button>`;
+  }
+
+  function renderPublicStatusCalendar(resource) {
+    const base = new Date();
+    const month = new Date(base.getFullYear(), base.getMonth() + state.queryMonthOffset, 1);
+    const year = month.getFullYear();
+    const monthNo = month.getMonth();
+    const firstDay = new Date(year, monthNo, 1).getDay();
+    const days = new Date(year, monthNo + 1, 0).getDate();
+    const cells = [];
+    for (let i=0; i<firstDay; i++) cells.push(null);
+    for (let d=1; d<=days; d++) cells.push(new Date(year, monthNo, d));
+    while (cells.length % 7) cells.push(null);
+    const names = ['日','一','二','三','四','五','六'];
+    return `<div class="query-status-calendar">
+      <div class="query-status-calendar-head"><button class="query-calendar-nav" data-query-calendar-month="prev">‹</button><strong>${year}年${monthNo+1}月</strong><button class="query-calendar-nav" data-query-calendar-month="next">›</button></div>
+      <div class="query-status-weekdays">${names.map(name => `<div>${name}</div>`).join('')}</div>
+      <div class="query-status-grid">${cells.map(date => date ? renderPublicStatusDay(resource, toIsoDate(date), date.getDate()) : '<div class="query-status-day empty-cell"></div>').join('')}</div>
+    </div>`;
+  }
+
+  function renderPublicStatusDay(resource, dateIso, dayNo) {
+    const bookings = publicBookingsForResourceDate(resource.id, dateIso);
+    const occupied = bookings.length > 0;
+    const block = getPublicResourceBlock(resource.id, dateIso);
+    const baseAvailable = publicCalendarDayBaseAvailable(resource, dateIso);
+    const status = occupied ? 'red' : (block || !baseAvailable ? 'gray' : 'green');
+    const label = occupied ? '已借用' : (block ? '不可借用' : (!baseAvailable ? '未開放' : '空位'));
+    const selected = state.querySelectedDate === dateIso ? ' selected' : '';
+    return `<button class="query-status-day ${status}${selected}" data-query-calendar-date="${dateIso}"><span class="query-day-number">${dayNo}</span><span class="query-day-state">${label}</span></button>`;
+  }
+
+  function publicBookingsForResourceDate(resourceId, dateIso) {
+    return (state.publicBookings || []).filter(booking => booking.resourceId === resourceId && dateIso >= booking.date && dateIso <= (booking.returnDate || booking.date));
+  }
+
+  function getPublicResourceBlock(resourceId, dateIso) {
+    return (state.resourceBlocks || []).find(block => block.resource_id === resourceId && String(block.block_date) === dateIso) || null;
+  }
+
+  function publicCalendarDayBaseAvailable(resource, dateIso) {
+    if (dateIso < todayIso() && !publicBookingsForResourceDate(resource.id, dateIso).length) return false;
+    const rules = (state.availability || []).filter(rule => rule.resource_id === resource.id && rule.active !== false);
+    if (resource.type === 'item' && !rules.length) return true;
+    const weekday = new Date(`${dateIso}T12:00:00`).getDay();
+    return rules.some(rule => availabilityMatchesDate(rule, dateIso, weekday));
+  }
+
+  function renderPublicDateStatus(resource, dateIso) {
+    const bookings = publicBookingsForResourceDate(resource.id, dateIso);
+    const block = getPublicResourceBlock(resource.id, dateIso);
+    const available = publicCalendarDayBaseAvailable(resource, dateIso);
+    const status = bookings.length ? 'red' : (block || !available ? 'gray' : 'green');
+    const heading = bookings.length ? '已借用' : (block ? '不可借用' : (!available ? '未開放' : '空位'));
+    let details = '';
+    if (bookings.length) {
+      if (resource.type === 'room') {
+        const periods = (state.busyPeriods || []).filter(period => period.resourceId === resource.id && dateIso >= period.date && dateIso <= (period.returnDate || period.date));
+        const unique = [];
+        const seen = new Set();
+        periods.forEach(period => {
+          const label = period.startTime && period.endTime ? `${period.startTime}–${period.endTime}` : '當日已有預約';
+          if (!seen.has(label)) { seen.add(label); unique.push(label); }
+        });
+        details = unique.length ? `<div class="query-status-detail-list">${unique.map(label => `<span>${escapeHtml(label)}</span>`).join('')}</div>` : '<div class="helper">當日已有房間預約</div>';
+      } else {
+        const rows = bookings.map(booking => {
+          const range = booking.returnDate && booking.returnDate !== booking.date ? `${formatDate(booking.date)} 至 ${formatDate(booking.returnDate)}` : formatDate(booking.date);
+          return `<span>${range}${Number(booking.quantity || 1) > 1 ? `・數量 ${Number(booking.quantity)}` : ''}</span>`;
+        });
+        details = `<div class="query-status-detail-list">${rows.join('')}</div>`;
+      }
+    } else if (block) {
+      details = '<div class="helper">此日期已由管理員設定為不可借用。</div>';
+    } else if (!available) {
+      details = '<div class="helper">此日期未設定開放借用。</div>';
+    } else {
+      details = '<div class="helper">目前沒有已批准的借用紀錄。</div>';
+    }
+    return `<div class="query-date-status ${status}"><div><span class="query-date-label">${formatDate(dateIso)}</span><strong>${heading}</strong></div>${details}</div>`;
   }
 
   function renderMyPage() {
@@ -880,6 +983,30 @@
 
     document.querySelectorAll('[data-field]').forEach(input => {
       input.addEventListener('input', handleFieldInput);
+    });
+
+    document.querySelectorAll('[data-query-resource]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.queryResourceId = btn.dataset.queryResource;
+        state.queryMonthOffset = 0;
+        state.querySelectedDate = '';
+        render();
+      });
+    });
+
+    document.querySelectorAll('[data-query-calendar-month]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.queryMonthOffset += btn.dataset.queryCalendarMonth === 'next' ? 1 : -1;
+        state.querySelectedDate = '';
+        render();
+      });
+    });
+
+    document.querySelectorAll('[data-query-calendar-date]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.querySelectedDate = btn.dataset.queryCalendarDate;
+        render();
+      });
     });
 
     const queryInput = document.querySelector('[data-query-input]');
