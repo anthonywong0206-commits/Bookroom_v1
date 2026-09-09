@@ -617,8 +617,39 @@ ${resourceName(b.resource_id)}｜${b.booking_date}`))return;
   }
 
   function renderLogin(message=''){
-    app.innerHTML=`<div class="login-shell"><form class="login-card" data-login><h1>管理員登入</h1><p>使用已設定為 admin 的 Supabase 帳戶登入。</p>${message?`<div class="error-box">${esc(message)}</div>`:''}<div class="field"><span>電郵</span><input class="input" type="email" name="email" required autocomplete="username"></div><div class="field"><span>密碼</span><input class="input" type="password" name="password" required autocomplete="current-password"></div><button class="btn btn-primary" type="submit">登入</button><p class="mini">登入入口只設於桌面管理員頁面。</p></form></div>`;
-    qs('[data-login]').onsubmit=async e=>{e.preventDefault();const fd=new FormData(e.currentTarget);const {data,error}=await supabase.auth.signInWithPassword({email:String(fd.get('email')),password:String(fd.get('password'))});if(error)return renderLogin(error.message);const ok=await verifyAdmin(data.user);if(!ok){await supabase.auth.signOut();return renderLogin('此帳戶沒有管理員權限。');}state.user=data.user;await refreshAll();render();};
+    const activationEmail=String(cfg.adminActivationEmail||'').trim().toLowerCase();
+    app.innerHTML=`<div class="login-shell"><form class="login-card" data-login><h1>管理員登入</h1><p>使用 Supabase 管理員帳戶登入。首次啟用時請同時輸入一次性啟用碼。</p>${message?`<div class="error-box">${esc(message)}</div>`:''}<div class="field"><span>電郵</span><input class="input" type="email" name="email" required autocomplete="username" value="${attr(cfg.adminActivationEmail||'')}"></div><div class="field"><span>密碼</span><input class="input" type="password" name="password" required autocomplete="current-password"></div><div class="field"><span>首次啟用碼（一般登入可留空）</span><input class="input" type="password" name="activation_code" autocomplete="one-time-code" placeholder="首次建立／啟用管理員時輸入"></div><button class="btn btn-primary" type="submit">登入／首次啟用</button><p class="mini">啟用碼只使用一次，不會儲存在網站程式碼。登入入口只設於桌面管理員頁面。</p></form></div>`;
+    qs('[data-login]').onsubmit=async e=>{
+      e.preventDefault();
+      const fd=new FormData(e.currentTarget);
+      const email=String(fd.get('email')||'').trim().toLowerCase();
+      const password=String(fd.get('password')||'');
+      const activationCode=String(fd.get('activation_code')||'').trim();
+      if(!email||!password)return renderLogin('請輸入電郵及密碼。');
+
+      let signIn=await supabase.auth.signInWithPassword({email,password});
+      if(signIn.error){
+        if(!activationCode)return renderLogin('登入失敗。如屬首次啟用，請輸入一次性啟用碼。');
+        if(activationEmail&&email!==activationEmail)return renderLogin('此電郵不在首次管理員啟用名單內。');
+        const signUp=await supabase.auth.signUp({email,password});
+        if(signUp.error)return renderLogin('首次啟用失敗：'+signUp.error.message);
+        if(!signUp.data.session){
+          return renderLogin('管理員帳戶已建立。請到電郵完成 Supabase 驗證，之後返回此頁以相同密碼及一次性啟用碼登入。');
+        }
+        signIn={data:{user:signUp.data.user,session:signUp.data.session},error:null};
+      }
+
+      const user=signIn.data?.user;
+      if(!user)return renderLogin('登入失敗，請重試。');
+      let ok=await verifyAdmin(user);
+      if(!ok&&activationCode){
+        const claim=await supabase.rpc('claim_admin_role',{p_activation_code:activationCode});
+        if(claim.error||claim.data!==true){await supabase.auth.signOut();return renderLogin('一次性啟用碼不正確、已使用或帳戶不符合啟用條件。');}
+        ok=await verifyAdmin(user);
+      }
+      if(!ok){await supabase.auth.signOut();return renderLogin('此帳戶尚未啟用管理員權限。首次啟用請輸入一次性啟用碼。');}
+      state.user=user;await refreshAll();render();
+    };
   }
   function renderConfigError(){renderFatal('目前已設定為正式模式，但 config.js 尚未填入 Supabase URL 或 Publishable Key。');}
   function renderFatal(message){app.innerHTML=`<div class="login-shell"><div class="login-card"><h1>管理員後台未能載入</h1><div class="error-box">${esc(message)}</div><a class="btn btn-secondary" href="index.html" style="display:block;text-align:center;text-decoration:none">返回前台</a></div></div>`;}

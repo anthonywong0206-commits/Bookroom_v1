@@ -1,23 +1,24 @@
-# 房間及物品預約系統 v9
+# 房間及物品預約系統 — v10 LIVE Supabase
 
-最新版本加入 **機構前台登入與嚴格資料隔離**。
+這是目前正式 Supabase 跨平台版本。
 
-前台流程：
+## Supabase
 
-**選擇機構 → 輸入機構密碼 → 首頁 → 預約／查詢**
+- Project：`room-resource-booking-system`
+- Project ref：`xdilyyjmuaovafcewins`
+- Region：Singapore
+- Mode：LIVE (`demoMode: false`)
 
-不同機構的房間、物品、借用日曆、封鎖日期及預約申請會按 `organization_id` 分隔。
+前台、後台、房間／物品、時段、借用日曆、封鎖日期、用途設定及圖片均使用同一 Supabase project，因此不同電腦／手機會讀取同一份資料。
 
-## Demo Mode
+## 安全
 
-可直接更新網站檔案測試。既有 Demo 機構如未設定密碼，預設為 `1234`；可在管理員後台「機構管理」修改。
+- Browser 只包含 Publishable Key。
+- 不包含 service-role key。
+- 所有 public tables 均啟用 RLS。
+- 前台需要先選擇機構及輸入機構密碼。
+- 前台資料由 organization-scoped RPC 讀取／提交，避免機構資料混雜。
+- 管理員 CRUD RPC 只開放給 authenticated 帳戶，且函數內再次檢查 `profiles.role = admin`。
+- 管理員首次啟用使用一次性啟用碼，啟用碼不會放入網站檔案。
 
-## Supabase Mode
-
-除了更新網站檔案，必須在 Supabase SQL Editor 執行：
-
-`supabase/20260909_v9_organization_portal_isolation.sql`
-
-執行後，既有機構的臨時前台密碼為 `1234`，請立即在管理員後台逐一修改。
-
-詳情見 `UPDATE_V9.md`。
+詳細內容請看 `UPDATE_V10.md`。

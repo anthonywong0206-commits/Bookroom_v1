@@ -155,6 +155,11 @@
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') refreshFromSource(true);
     });
+    if (!DEMO) {
+      setInterval(() => {
+        if (document.visibilityState === 'visible') refreshFromSource(true);
+      }, 30000);
+    }
   }
 
   function broadcastSync() {
