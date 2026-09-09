@@ -1,12 +1,16 @@
 {
   "name": "房間及物品預約系統",
-  "short_name": "資源預約",
-  "description": "跨平台房間及物品預約、審批與狀態查詢系統",
-  "start_url": "./",
+  "short_name": "預約系統",
+  "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#f5f8fc",
+  "background_color": "#f3f8ff",
   "theme_color": "#1976e9",
   "icons": [
-    { "src": "assets/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    {
+      "src": "assets/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
   ]
 }
