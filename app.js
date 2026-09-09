@@ -47,6 +47,7 @@
     organizations: [],
     availability: [],
     publicBookings: [],
+    purposeOptions: [],
     loadingData: true,
     sourceError: '',
   };
@@ -76,15 +77,13 @@
   }
 
   function defaultLoanFlow() {
-    const start = addDays(todayIso(), 1);
     return {
-      startDate: start,
-      returnDate: addDays(start, 7),
+      startDate: '',
+      returnDate: '',
       items: {},
       purpose: '',
       applicantName: '',
       phone: '',
-      organization: '',
       notes: '',
     };
   }
@@ -141,16 +140,21 @@
         { id: 'org-demo-2', name: '樂齡活動中心', active: true, created_at: new Date().toISOString() },
       ],
       resources: [
-        { id: 'room-demo-1', organization_id: 'org-demo-1', type: 'room', name: '活動室 1-2', location: '1/F', description: '適合小組及活動', capacity: 20, stock_quantity: 1, requires_room: false, active: true },
-        { id: 'room-demo-2', organization_id: 'org-demo-1', type: 'room', name: '會議室', location: '2/F', description: '適合會議', capacity: 10, stock_quantity: 1, requires_room: false, active: true },
-        { id: 'item-demo-1', organization_id: 'org-demo-1', type: 'item', name: '投影機', location: '中心內', description: '中心即日使用', capacity: 1, stock_quantity: 2, requires_room: true, active: true },
-        { id: 'item-demo-2', organization_id: 'org-demo-1', type: 'item', name: '輪椅', location: '地下接待處', description: '可外借', capacity: 1, stock_quantity: 3, requires_room: false, active: true },
+        { id: 'room-demo-1', organization_id: 'org-demo-1', type: 'room', name: '活動室 1-2', location: '1/F', description: '適合小組及活動', capacity: 20, stock_quantity: 1, requires_room: false, image_url: null, active: true },
+        { id: 'room-demo-2', organization_id: 'org-demo-1', type: 'room', name: '會議室', location: '2/F', description: '適合會議', capacity: 10, stock_quantity: 1, requires_room: false, image_url: null, active: true },
+        { id: 'item-demo-1', organization_id: 'org-demo-1', type: 'item', name: '投影機', location: '中心內', description: '中心即日使用', capacity: 1, stock_quantity: 2, requires_room: true, image_url: null, active: true },
+        { id: 'item-demo-2', organization_id: 'org-demo-1', type: 'item', name: '輪椅', location: '地下接待處', description: '可外借', capacity: 1, stock_quantity: 3, requires_room: false, image_url: null, active: true },
       ],
       availability: [
         { id: 'av-1', resource_id: 'room-demo-1', weekday: 1, specific_date: null, date_from: null, date_to: null, start_time: '09:00', end_time: '18:00', active: true },
         { id: 'av-2', resource_id: 'room-demo-2', weekday: 2, specific_date: null, date_from: null, date_to: null, start_time: '09:00', end_time: '17:00', active: true },
       ],
       bookings: [],
+      purposeOptions: [
+        { id: 'purpose-case', label: '個案', active: true, sort_order: 1 },
+        { id: 'purpose-group', label: '小組', active: true, sort_order: 2 },
+        { id: 'purpose-outing', label: '外出活動', active: true, sort_order: 3 },
+      ],
     };
   }
 
@@ -165,6 +169,7 @@
     state._allResources = Array.isArray(data.resources) ? data.resources : [];
     state.availability = Array.isArray(data.availability) ? data.availability : [];
     state._allBookings = Array.isArray(data.bookings) ? data.bookings : [];
+    state.purposeOptions = Array.isArray(data.purposeOptions) ? data.purposeOptions : demoSeed().purposeOptions;
     state.publicBookings = buildDemoPublicBookings(state._allBookings);
   }
 
@@ -176,10 +181,12 @@
       resources: latest?.resources || state._allResources || [],
       availability: latest?.availability || state.availability,
       bookings: state._allBookings || latest?.bookings || [],
+      purposeOptions: latest?.purposeOptions || state.purposeOptions || demoSeed().purposeOptions,
     };
     state.organizations = current.organizations;
     state._allResources = current.resources;
     state.availability = current.availability;
+    state.purposeOptions = current.purposeOptions;
     localStorage.setItem(ADMIN_DEMO_KEY, JSON.stringify(current));
     broadcastSync();
   }
@@ -200,23 +207,26 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'organizations' }, () => refreshFromSource(true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'resources' }, () => refreshFromSource(true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'resource_availability' }, () => refreshFromSource(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'purpose_options' }, () => refreshFromSource(true))
       .subscribe();
   }
 
   async function loadSupabaseSource() {
     const client = await ensureSupabaseClient();
-    const [orgs, resourcesResult, availabilityResult, publicResult] = await Promise.all([
+    const [orgs, resourcesResult, availabilityResult, publicResult, purposeResult] = await Promise.all([
       client.from('organizations').select('*').eq('active', true).order('name'),
       client.from('resources').select('*').eq('active', true).order('type').order('name'),
       client.from('resource_availability').select('*').eq('active', true).order('resource_id'),
       client.rpc('get_public_resource_bookings'),
+      client.from('purpose_options').select('*').eq('active', true).order('sort_order').order('label'),
     ]);
-    for (const result of [orgs, resourcesResult, availabilityResult, publicResult]) {
+    for (const result of [orgs, resourcesResult, availabilityResult, publicResult, purposeResult]) {
       if (result.error) throw result.error;
     }
     state.organizations = orgs.data || [];
     state._allResources = resourcesResult.data || [];
     state.availability = availabilityResult.data || [];
+    state.purposeOptions = purposeResult.data || [];
     state.publicBookings = (publicResult.data || []).map(row => ({
       resourceId: row.resource_id,
       title: row.resource_name,
@@ -224,6 +234,7 @@
       date: row.booking_date,
       returnDate: row.loan_end_date || row.booking_date,
       status: row.status || 'approved',
+      quantity: Number(row.quantity || 1),
     }));
   }
 
@@ -235,7 +246,7 @@
       capacity: Number(resource.capacity || 1),
       organizationName: organizationName(resource.organization_id),
     }));
-    centerUseItems = resources.filter(resource => resource.type === 'item' && resource.requires_room).map(toUiItem);
+    centerUseItems = resources.filter(resource => resource.type === 'item').map(toUiItem);
     loanItems = resources.filter(resource => resource.type === 'item' && !resource.requires_room).map(toUiItem);
     if (state.roomFlow.roomId && !rooms.some(room => room.id === state.roomFlow.roomId)) {
       state.roomFlow.roomId = '';
@@ -251,7 +262,7 @@
       max: Math.max(1, Number(resource.stock_quantity || 1)),
       icon: iconForItem(resource.name),
       organizationName: organizationName(resource.organization_id),
-      description: resource.description || (resource.requires_room ? '中心內同日使用' : '外借物品'),
+      description: resource.description || (resource.requires_room ? '只可配合房間預約／中心內使用' : '可配合房間預約或單獨外借'),
     };
   }
 
@@ -285,6 +296,7 @@
           date: booking.booking_date || booking.date,
           returnDate: booking.loan_end_date || booking.returnDate || booking.booking_date || booking.date,
           status: booking.status,
+          quantity: Number(booking.quantity || 1),
         };
         const key = [row.resourceId, row.title, row.date, row.returnDate].join('|');
         if (seen.has(key)) return null;
@@ -403,7 +415,7 @@
           <div class="room-grid">
             ${rooms.map(room => `
               <button class="room-card ${f.roomId === room.id ? 'selected' : ''}" data-room-id="${room.id}">
-                <div class="room-photo"></div>
+                <div class="room-photo ${room.image_url ? 'has-image' : ''}">${room.image_url ? `<img src="${escapeAttr(room.image_url)}" alt="${escapeAttr(room.name)}">` : '<span class="resource-image-placeholder">房間圖片</span>'}</div>
                 <div class="room-meta">
                   <h3>${room.name}</h3>
                   <p>可容納 ${room.capacity} 人・${room.description}</p>
@@ -451,8 +463,8 @@
         <div class="notice-box">
           <div class="notice-icon">i</div>
           <div>
-            <strong>物品只可即日在中心使用</strong>
-            <span>請選擇所需物品及數量，不可攜出中心。</span>
+            <strong>房間預約可一併選擇物品</strong>
+            <span>已勾選「只可配合房間」的物品只可在此流程預約；其他物品亦可另外單獨外借。</span>
           </div>
         </div>
         <div class="item-grid">
@@ -511,81 +523,57 @@
 
   function renderLoanBooking() {
     const selectedCount = sumQuantities(state.loanFlow.items);
+    const hasItems = selectedCount > 0;
     return `
-      ${renderHeader('預約外借物品', '借用開始日期預設一星期', 'reserveType')}
+      ${renderHeader('預約外借物品', '先選擇物品，再選擇可預約日期', 'reserveType')}
       <section class="card step-card">
-        ${renderStep(3, 1, ['選擇日期', '選擇物品', '確認資料'])}
+        ${renderStep(3, hasItems ? 2 : 1, ['選擇物品', '選擇日期', '確認資料'])}
 
         <div class="field-block">
-          <div class="field-title"><span class="order">1</span>選擇借用開始日期</div>
-          ${renderCalendar('loan')}
-        </div>
-
-        <div class="field-block">
-          <div class="field-title"><span class="order">2</span>借用及歸還日期</div>
-          <div class="notice-box warning">
-            <div class="notice-icon">i</div>
-            <div>
-              <strong>預設借用期為一星期</strong>
-              <span>系統會自動計算歸還日期，你亦可自行修改。</span>
-            </div>
-          </div>
-          <div class="form-grid">
-            <div>
-              <label class="field-label">借用開始日期</label>
-              <input class="input" type="date" data-loan-start value="${state.loanFlow.startDate}" />
-            </div>
-            <div>
-              <label class="field-label">歸還日期</label>
-              <input class="input" type="date" data-loan-return value="${state.loanFlow.returnDate}" />
-            </div>
-          </div>
-        </div>
-
-        <div class="field-block">
-          <div class="field-title"><span class="order">3</span>選擇外借物品及數量</div>
+          <div class="field-title"><span class="order">1</span>選擇外借物品及數量</div>
           <div class="item-grid two-col">
-            ${loanItems.map(item => renderItemCard(item, state.loanFlow.items[item.id] || 0, 'loan-item')).join('')}
+            ${loanItems.length ? loanItems.map(item => renderItemCard(item, state.loanFlow.items[item.id] || 0, 'loan-item')).join('') : '<div class="helper">目前沒有可單獨外借的物品</div>'}
           </div>
           <div class="helper" style="margin-top:10px;">已選 ${selectedCount} 件外借物品</div>
         </div>
 
-        <button class="btn btn-primary btn-block" data-nav-page="loanConfirm">下一步</button>
+        <div class="field-block ${hasItems ? '' : 'is-disabled-block'}">
+          <div class="field-title"><span class="order">2</span>選擇可以預約的日期</div>
+          <div class="notice-box warning">
+            <div class="notice-icon">i</div>
+            <div><strong>預設借用期限為 3 日</strong><span>選擇開始日期後，系統會自動帶出 3 日後的預設歸還日期；如有需要可自行修改。</span></div>
+          </div>
+          ${hasItems ? renderCalendar('loan') : '<div class="calendar-disabled-message">請先選擇至少一項物品，日曆才會顯示可預約日期。</div>'}
+          ${state.loanFlow.startDate ? `<div class="form-grid" style="margin-top:14px;"><div><label class="field-label">借用開始日期</label><input class="input" type="date" data-loan-start value="${state.loanFlow.startDate}" readonly /></div><div><label class="field-label">歸還日期</label><input class="input" type="date" data-loan-return min="${state.loanFlow.startDate}" value="${state.loanFlow.returnDate}" /></div></div>` : ''}
+        </div>
+        <button class="btn btn-primary btn-block" data-loan-next ${!hasItems || !state.loanFlow.startDate ? 'disabled' : ''}>下一步</button>
       </section>
     `;
+  }
+
+  function renderPurposeButtons(flowKey) {
+    const selected = state[flowKey].purpose || '';
+    const options = (state.purposeOptions || []).filter(x => x.active !== false).sort((a,b)=>(Number(a.sort_order)||0)-(Number(b.sort_order)||0));
+    if (!options.length) return '<div class="helper">管理員尚未設定用途選項</div>';
+    return `<div class="purpose-options">${options.map(x=>`<button type="button" class="purpose-option ${selected===x.label?'selected':''}" data-purpose-select="${flowKey}:${escapeAttr(x.label)}">${escapeHtml(x.label)}</button>`).join('')}</div>`;
   }
 
   function renderLoanConfirm() {
     const items = selectedItemSummary(loanItems, state.loanFlow.items);
     return `
-      ${renderHeader('確認外借申請', '填寫借用資料', 'loanBooking')}
+      ${renderHeader('確認外借申請', '填寫申請者資料', 'loanBooking')}
       <section class="card step-card">
+        ${renderStep(3, 3, ['選擇物品', '選擇日期', '確認資料'])}
         <div class="summary-card">
+          <div class="summary-row"><span>外借物品</span><strong>${items.length ? items.map(x => `${x.name} × ${x.qty}`).join('、') : '-'}</strong></div>
           <div class="summary-row"><span>借用開始</span><strong>${formatDate(state.loanFlow.startDate)}</strong></div>
           <div class="summary-row"><span>歸還日期</span><strong>${formatDate(state.loanFlow.returnDate)}</strong></div>
-          <div class="summary-row"><span>外借物品</span><strong>${items.length ? items.map(x => `${x.name} × ${x.qty}`).join('、') : '-'}</strong></div>
         </div>
-        <div class="field-block" style="margin-top:16px;">
-          <label class="field-label">用途 *</label>
-          <textarea class="textarea" data-field="loan-purpose" placeholder="例如：探訪、健康監察、社區活動">${escapeHtml(state.loanFlow.purpose)}</textarea>
-        </div>
-        <div class="form-grid">
-          <div>
-            <label class="field-label">申請人姓名 *</label>
-            <input class="input" data-field="loan-name" value="${escapeAttr(state.loanFlow.applicantName)}" placeholder="請輸入姓名" />
-          </div>
-          <div>
-            <label class="field-label">聯絡電話 *</label>
-            <input class="input" data-field="loan-phone" value="${escapeAttr(state.loanFlow.phone)}" placeholder="請輸入電話" />
-          </div>
-          <div>
-            <label class="field-label">所屬單位</label>
-            <input class="input" data-field="loan-organization" value="${escapeAttr(state.loanFlow.organization)}" placeholder="例如：中心／機構名稱" />
-          </div>
-          <div>
-            <label class="field-label">備註</label>
-            <textarea class="textarea" data-field="loan-notes" placeholder="例如：需要提早領取時間">${escapeHtml(state.loanFlow.notes)}</textarea>
-          </div>
+        <div class="form-grid" style="margin-top:16px;">
+          <div><label class="field-label">申請者姓名 *</label><input class="input" data-field="loan-name" value="${escapeAttr(state.loanFlow.applicantName)}" placeholder="請輸入姓名" /></div>
+          <div><label class="field-label">電話 *</label><input class="input" data-field="loan-phone" value="${escapeAttr(state.loanFlow.phone)}" placeholder="請輸入電話" /></div>
+          <div class="full-width-field"><label class="field-label">用途 *</label>${renderPurposeButtons('loanFlow')}</div>
+          <div class="full-width-field"><label class="field-label">備註</label><textarea class="textarea" data-field="loan-notes" placeholder="如有特別安排可在此註明">${escapeHtml(state.loanFlow.notes)}</textarea></div>
         </div>
         <div class="inline-actions" style="margin-top:16px;">
           <button class="btn btn-secondary" data-nav-page="loanBooking">上一步</button>
@@ -705,7 +693,8 @@
     const iso = toIsoDate(date);
     const past = iso < todayIso();
     const roomUnavailable = kind === 'room' && (!state.roomFlow.roomId || !isRoomDateAvailable(state.roomFlow.roomId, iso));
-    const disabled = past || roomUnavailable;
+    const loanUnavailable = kind === 'loan' && !isLoanStartDateAvailable(iso);
+    const disabled = past || roomUnavailable || loanUnavailable;
     const isToday = iso === todayIso();
     const cls = ['day-cell', disabled ? 'disabled' : 'available', selected === iso ? 'selected' : '', isToday ? 'today' : ''].filter(Boolean).join(' ');
     return `<button class="${cls}" ${disabled ? 'disabled' : `data-select-date="${kind}:${iso}"`}>${date.getDate()}</button>`;
@@ -713,21 +702,16 @@
 
   function renderItemCard(item, qty, prefix) {
     const selected = qty > 0;
+    const modeText = item.requires_room ? '只可配合房間預約' : '可房間附加／可單獨外借';
+    const visual = item.image_url ? `<div class="item-visual has-image"><img src="${escapeAttr(item.image_url)}" alt="${escapeAttr(item.name)}"></div>` : `<div class="item-visual">${icons[item.icon]}</div>`;
     return `
       <div class="item-card ${selected ? 'selected' : ''}">
         <div class="item-check"></div>
         <div style="display:flex; align-items:center; gap:12px; min-width:0;">
-          <div class="item-visual">${icons[item.icon]}</div>
-          <div class="item-content">
-            <h3>${item.name}</h3>
-            <p>${item.description}</p>
-          </div>
+          ${visual}
+          <div class="item-content"><h3>${escapeHtml(item.name)}</h3><p>${escapeHtml(item.description || '')}</p><span class="item-mode-note">${modeText}</span></div>
         </div>
-        <div class="quantity">
-          <button class="qty-btn" data-item-qty="${prefix}:${item.id}:-1">－</button>
-          <div class="qty-value">${qty}</div>
-          <button class="qty-btn" data-item-qty="${prefix}:${item.id}:1">＋</button>
-        </div>
+        <div class="quantity"><button class="qty-btn" data-item-qty="${prefix}:${item.id}:-1">－</button><div class="qty-value">${qty}</div><button class="qty-btn" data-item-qty="${prefix}:${item.id}:1">＋</button></div>
       </div>
     `;
   }
@@ -803,9 +787,7 @@
           state.roomFlow.slots = [];
         } else {
           state.loanFlow.startDate = iso;
-          if (!state.loanFlow.returnDate || state.loanFlow.returnDate <= iso) {
-            state.loanFlow.returnDate = addDays(iso, 7);
-          }
+          state.loanFlow.returnDate = addDays(iso, 3);
         }
         render();
       });
@@ -840,6 +822,7 @@
         const next = Math.max(0, Math.min(item.max, (target[id] || 0) + delta));
         target[id] = next;
         if (next === 0) delete target[id];
+        if (!isRoom) { state.loanFlow.startDate = ''; state.loanFlow.returnDate = ''; }
         render();
       });
     });
@@ -876,7 +859,7 @@
     if (loanStart) loanStart.addEventListener('input', () => {
       state.loanFlow.startDate = loanStart.value;
       if (!state.loanFlow.returnDate || state.loanFlow.returnDate <= state.loanFlow.startDate) {
-        state.loanFlow.returnDate = addDays(state.loanFlow.startDate, 7);
+        state.loanFlow.returnDate = addDays(state.loanFlow.startDate, 3);
       }
       render();
     });
@@ -885,6 +868,21 @@
     if (loanReturn) loanReturn.addEventListener('input', () => {
       state.loanFlow.returnDate = loanReturn.value;
       persistForms();
+    });
+
+    const loanNext = document.querySelector('[data-loan-next]');
+    if (loanNext) loanNext.addEventListener('click', () => {
+      const items = itemRequestPayload(loanItems, state.loanFlow.items);
+      if (!items.length) return toast('請先選擇至少一項外借物品', 'error');
+      if (!state.loanFlow.startDate || !state.loanFlow.returnDate) return toast('請選擇可以預約的日期', 'error');
+      state.page = 'loanConfirm'; state.currentTab = 'reserve'; render();
+    });
+
+    document.querySelectorAll('[data-purpose-select]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const [flowKey, ...parts] = btn.dataset.purposeSelect.split(':');
+        state[flowKey].purpose = parts.join(':'); persistForms(); render();
+      });
     });
 
     const submitRoom = document.querySelector('[data-submit="room"]');
@@ -906,7 +904,6 @@
       'loan-purpose': ['loanFlow', 'purpose'],
       'loan-name': ['loanFlow', 'applicantName'],
       'loan-phone': ['loanFlow', 'phone'],
-      'loan-organization': ['loanFlow', 'organization'],
       'loan-notes': ['loanFlow', 'notes'],
     };
     const [obj, prop] = mapping[key];
@@ -969,6 +966,7 @@
         purpose: f.purpose.trim(),
         applicant_name: f.applicantName.trim(),
         phone: f.phone.trim(),
+        applicant_note: f.notes.trim() || null,
         related_booking_id: null,
         loan_end_date: null,
         status: 'pending',
@@ -1015,6 +1013,7 @@
       p_purpose: f.purpose.trim(),
       p_applicant_name: f.applicantName.trim(),
       p_phone: f.phone.trim(),
+      p_applicant_note: f.notes.trim() || null,
     });
     if (error) throw error;
     return data;
@@ -1064,6 +1063,7 @@
         purpose: f.purpose.trim(),
         applicant_name: f.applicantName.trim(),
         phone: f.phone.trim(),
+        applicant_note: f.notes.trim() || null,
         related_booking_id: null,
         status: 'pending',
         created_at: now,
@@ -1082,6 +1082,7 @@
       p_purpose: f.purpose.trim(),
       p_applicant_name: f.applicantName.trim(),
       p_phone: f.phone.trim(),
+      p_applicant_note: f.notes.trim() || null,
     });
     if (error) throw error;
     return data;
@@ -1147,6 +1148,22 @@
     if (rule.date_from && dateIso < String(rule.date_from)) return false;
     if (rule.date_to && dateIso > String(rule.date_to)) return false;
     return true;
+  }
+
+  function isLoanStartDateAvailable(dateIso) {
+    const selected = itemRequestPayload(loanItems, state.loanFlow.items);
+    if (!selected.length || dateIso < todayIso()) return false;
+    const returnDate = addDays(dateIso, 3);
+    return selected.every(req => {
+      const item = loanItems.find(x => x.id === req.resource_id); if (!item) return false;
+      const rules = (state.availability || []).filter(rule => rule.resource_id === item.id && rule.active !== false);
+      if (rules.length) {
+        const weekday = new Date(`${dateIso}T12:00:00`).getDay();
+        if (!rules.some(rule => availabilityMatchesDate(rule, dateIso, weekday))) return false;
+      }
+      const used = (state.publicBookings || []).filter(b => b.resourceId === item.id && b.date <= returnDate && (b.returnDate || b.date) >= dateIso).reduce((sum,b)=>sum+Number(b.quantity||1),0);
+      return req.quantity <= Math.max(0, Number(item.stock_quantity || item.max || 1) - used);
+    });
   }
 
   function shortTime(value) {

@@ -7,7 +7,7 @@
   const DEMO_KEY='rrbs_admin_demo_v4';
   const SYNC_CHANNEL='rrbs-resource-sync';
   let syncChannel=null;
-  const state={tab:'organizations',organizations:[],resources:[],availability:[],bookings:[],resourceType:'room',editingOrgId:null,editingResourceId:null,selectedResourceId:null,user:null,loading:false,error:''};
+  const state={tab:'organizations',organizations:[],resources:[],availability:[],bookings:[],purposeOptions:[],resourceType:'room',editingOrgId:null,editingResourceId:null,selectedResourceId:null,editingPurposeId:null,user:null,loading:false,error:''};
   let supabase=null;
 
   const seed={
@@ -16,15 +16,19 @@
       {id:'org-demo-2',name:'樂齡活動中心',active:true,created_at:new Date().toISOString()}
     ],
     resources:[
-      {id:'room-demo-1',organization_id:'org-demo-1',type:'room',name:'活動室 1-2',location:'1/F',description:'適合小組及活動',capacity:20,stock_quantity:1,requires_room:false,active:true},
-      {id:'room-demo-2',organization_id:'org-demo-1',type:'room',name:'會議室',location:'2/F',description:'適合會議',capacity:10,stock_quantity:1,requires_room:false,active:true},
-      {id:'item-demo-1',organization_id:'org-demo-1',type:'item',name:'投影機',location:'中心內',description:'中心即日使用',capacity:1,stock_quantity:2,requires_room:true,active:true},
-      {id:'item-demo-2',organization_id:'org-demo-1',type:'item',name:'輪椅',location:'地下接待處',description:'可外借',capacity:1,stock_quantity:3,requires_room:false,active:true}
+      {id:'room-demo-1',organization_id:'org-demo-1',type:'room',name:'活動室 1-2',location:'1/F',description:'適合小組及活動',capacity:20,stock_quantity:1,requires_room:false,image_url:null,active:true},
+      {id:'room-demo-2',organization_id:'org-demo-1',type:'room',name:'會議室',location:'2/F',description:'適合會議',capacity:10,stock_quantity:1,requires_room:false,image_url:null,active:true},
+      {id:'item-demo-1',organization_id:'org-demo-1',type:'item',name:'投影機',location:'中心內',description:'中心即日使用',capacity:1,stock_quantity:2,requires_room:true,image_url:null,active:true},
+      {id:'item-demo-2',organization_id:'org-demo-1',type:'item',name:'輪椅',location:'地下接待處',description:'可外借',capacity:1,stock_quantity:3,requires_room:false,image_url:null,active:true}
     ],
     availability:[
       {id:'av-1',resource_id:'room-demo-1',weekday:1,specific_date:null,date_from:null,date_to:null,start_time:'09:00',end_time:'18:00',active:true},
       {id:'av-2',resource_id:'room-demo-2',weekday:2,specific_date:null,date_from:null,date_to:null,start_time:'09:00',end_time:'17:00',active:true}
-    ],bookings:[]
+    ],bookings:[],purposeOptions:[
+      {id:'purpose-case',label:'個案',active:true,sort_order:1},
+      {id:'purpose-group',label:'小組',active:true,sort_order:2},
+      {id:'purpose-outing',label:'外出活動',active:true,sort_order:3}
+    ]
   };
 
   init();
@@ -67,6 +71,7 @@
       .on('postgres_changes',{event:'*',schema:'public',table:'resources'},async()=>{await refreshAll();render();})
       .on('postgres_changes',{event:'*',schema:'public',table:'resource_availability'},async()=>{await refreshAll();render();})
       .on('postgres_changes',{event:'*',schema:'public',table:'bookings'},async()=>{await refreshAll();render();})
+      .on('postgres_changes',{event:'*',schema:'public',table:'purpose_options'},async()=>{await refreshAll();render();})
       .subscribe();
   }
 
@@ -78,12 +83,13 @@
       state.resources=clone(data.resources||[]);
       state.availability=clone(data.availability||[]);
       state.bookings=clone(data.bookings||[]);
+      state.purposeOptions=clone(data.purposeOptions||data.purpose_options||seed.purposeOptions);
       if(!saved) persistDemo();
     }catch(_){
-      state.organizations=clone(seed.organizations); state.resources=clone(seed.resources); state.availability=clone(seed.availability); state.bookings=[]; persistDemo();
+      state.organizations=clone(seed.organizations); state.resources=clone(seed.resources); state.availability=clone(seed.availability); state.bookings=[]; state.purposeOptions=clone(seed.purposeOptions); persistDemo();
     }
   }
-  function persistDemo(){ localStorage.setItem(DEMO_KEY,JSON.stringify({organizations:state.organizations,resources:state.resources,availability:state.availability,bookings:state.bookings})); if(syncChannel)syncChannel.postMessage({type:'changed',at:Date.now()}); }
+  function persistDemo(){ localStorage.setItem(DEMO_KEY,JSON.stringify({organizations:state.organizations,resources:state.resources,availability:state.availability,bookings:state.bookings,purposeOptions:state.purposeOptions})); if(syncChannel)syncChannel.postMessage({type:'changed',at:Date.now()}); }
   function clone(v){return JSON.parse(JSON.stringify(v));}
   function uid(prefix){return prefix+'-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8);}
 
@@ -93,14 +99,15 @@
     return data&&data.role==='admin';
   }
   async function refreshAll(){
-    const [orgs,res,av,bks]=await Promise.all([
+    const [orgs,res,av,bks,purposes]=await Promise.all([
       supabase.from('organizations').select('*').order('name'),
       supabase.from('resources').select('*').order('type').order('name'),
       supabase.from('resource_availability').select('*').order('resource_id'),
-      supabase.from('bookings').select('*').order('created_at',{ascending:false}).limit(100)
+      supabase.from('bookings').select('*').order('created_at',{ascending:false}).limit(100),
+      supabase.from('purpose_options').select('*').order('sort_order').order('label')
     ]);
-    for(const r of [orgs,res,av,bks]) if(r.error) throw r.error;
-    state.organizations=orgs.data||[]; state.resources=res.data||[]; state.availability=av.data||[]; state.bookings=bks.data||[];
+    for(const r of [orgs,res,av,bks,purposes]) if(r.error) throw r.error;
+    state.organizations=orgs.data||[]; state.resources=res.data||[]; state.availability=av.data||[]; state.bookings=bks.data||[]; state.purposeOptions=purposes.data||[];
   }
 
   function render(){
@@ -109,7 +116,7 @@
         <div class="admin-brand"><div class="admin-brand-mark">R</div><div><h1>資源預約管理</h1><p>房間及物品預約系統</p></div></div>
         <div class="mode-note">${DEMO?'Demo Mode：修改會儲存在此瀏覽器':'Supabase 正式模式'}</div>
         <nav class="side-nav">
-          ${navBtn('organizations','機構管理')}${navBtn('resources','房間／物品')}${navBtn('bookings','申請審批')}${navBtn('dashboard','概覽')}
+          ${navBtn('organizations','機構管理')}${navBtn('resources','房間／物品')}${navBtn('purposes','用途設定')}${navBtn('bookings','申請審批')}${navBtn('dashboard','概覽')}
         </nav>
         <div class="sidebar-bottom"><a href="index.html">返回前台</a>${!DEMO?'<button data-signout>登出</button>':''}</div>
       </aside>
@@ -121,6 +128,7 @@
   function renderMain(){
     if(state.tab==='organizations')return organizationsView();
     if(state.tab==='resources')return resourcesView();
+    if(state.tab==='purposes')return purposeOptionsView();
     if(state.tab==='bookings')return bookingsView();
     return dashboardView();
   }
@@ -162,7 +170,7 @@
       <div class="grid-two">
         <section class="panel"><div class="panel-head"><div><h3>${state.resourceType==='room'?'房間列表':'物品列表'}</h3><p>共 ${filtered.length} 項</p></div><button class="btn btn-primary" data-new-resource ${!state.organizations.length?'disabled':''}>＋ 新增${state.resourceType==='room'?'房間':'物品'}</button></div>
           <div class="table-wrap"><table><thead><tr><th>名稱</th><th>機構</th><th>${state.resourceType==='room'?'容量':'庫存'}</th><th>狀態</th><th>操作</th></tr></thead><tbody>
-          ${filtered.length?filtered.map(r=>`<tr><td><strong>${esc(r.name)}</strong><div class="mini">${esc(r.location||'')}</div></td><td>${esc(orgName(r.organization_id))}</td><td>${r.type==='room'?`${Number(r.capacity)||1} 人`:`${Number(r.stock_quantity)||1} 件`}</td><td><span class="tag ${r.active?'green':'gray'}">${r.active?'啟用':'停用'}</span></td><td><div class="row-actions"><button class="btn btn-secondary btn-small" data-edit-resource="${r.id}">修改</button><button class="btn btn-secondary btn-small" data-availability="${r.id}">時段</button><button class="btn btn-danger btn-small" data-delete-resource="${r.id}">刪除</button></div></td></tr>`).join(''):`<tr><td colspan="5" class="empty">尚未建立${state.resourceType==='room'?'房間':'物品'}</td></tr>`}
+          ${filtered.length?filtered.map(r=>`<tr><td><div class="resource-name-cell">${r.image_url?`<img class="resource-thumb" src="${attr(r.image_url)}" alt="">`:'<div class="resource-thumb placeholder">無圖</div>'}<div><strong>${esc(r.name)}</strong><div class="mini">${esc(r.location||'')}</div></div></div></td><td>${esc(orgName(r.organization_id))}</td><td>${r.type==='room'?`${Number(r.capacity)||1} 人`:`${Number(r.stock_quantity)||1} 件`}</td><td><span class="tag ${r.active?'green':'gray'}">${r.active?'啟用':'停用'}</span></td><td><div class="row-actions"><button class="btn btn-secondary btn-small" data-edit-resource="${r.id}">修改</button><button class="btn btn-secondary btn-small" data-availability="${r.id}">時段</button><button class="btn btn-danger btn-small" data-delete-resource="${r.id}">刪除</button></div></td></tr>`).join(''):`<tr><td colspan="5" class="empty">尚未建立${state.resourceType==='room'?'房間':'物品'}</td></tr>`}
           </tbody></table></div>
         </section>
         <div>
@@ -173,8 +181,8 @@
                 <div class="field full"><span>名稱 *</span><input class="input" name="name" required maxlength="120" value="${attr(edit?.name||'')}" placeholder="例如：活動室 1-2"></div>
                 <div class="field"><span>位置</span><input class="input" name="location" value="${attr(edit?.location||'')}" placeholder="例如：1/F"></div>
                 ${state.resourceType==='room'?`<div class="field"><span>可容納人數 *</span><input class="input" type="number" name="capacity" min="1" required value="${edit?.capacity||20}"></div>`:`<div class="field"><span>庫存數量 *</span><input class="input" type="number" name="stock_quantity" min="1" required value="${edit?.stock_quantity||1}"></div>`}
-                <div class="field full"><span>描述</span><textarea class="textarea" name="description" placeholder="簡單描述用途或借用限制">${esc(edit?.description||'')}</textarea></div>
-                ${state.resourceType==='item'?`<label class="checkline full"><input type="checkbox" name="requires_room" ${edit?.requires_room?'checked':''}> 此物品只可配合房間預約／中心內使用</label>`:''}
+                <div class="field full"><span>圖片</span><div class="admin-image-box">${edit?.image_url?`<img data-resource-image-preview src="${attr(edit.image_url)}" alt="資源圖片">`:'<div data-resource-image-empty>尚未上載圖片</div>'}</div><input class="input" type="file" name="image" accept="image/jpeg,image/png,image/webp"><div class="mini">支援 JPG、PNG、WebP，建議 2MB 以下。</div></div><div class="field full"><span>描述</span><textarea class="textarea" name="description" placeholder="簡單描述用途或借用限制">${esc(edit?.description||'')}</textarea></div>
+                ${state.resourceType==='item'?`<label class="checkline full"><input type="checkbox" name="requires_room" ${edit?.requires_room?'checked':''}> 此物品只可配合房間預約／中心內使用（不勾選＝可同房間預約及可單獨外借）</label>`:''}
                 <label class="checkline full"><input type="checkbox" name="active" ${!edit||edit.active?'checked':''}> 啟用此資源</label>
               </div>
               <div class="form-actions">${edit?'<button type="button" class="btn btn-secondary" data-cancel-resource>取消</button>':''}<button class="btn btn-primary" type="submit" ${!state.organizations.length?'disabled':''}>${edit?'儲存修改':'新增資源'}</button></div>
@@ -195,6 +203,25 @@
       </form>
       <div class="availability-list" style="margin-top:12px">${list.length?list.map(a=>`<div class="availability-row"><span>${a.specific_date?esc(a.specific_date):weekdayNames[Number(a.weekday)]}</span><span>${shortTime(a.start_time)}–${shortTime(a.end_time)}</span><span><span class="tag ${a.active?'green':'gray'}">${a.active?'啟用':'停用'}</span></span><button class="btn btn-danger btn-small" data-delete-av="${a.id}">刪除</button></div>`).join(''):'<div class="empty">尚未設定可用時段</div>'}</div>
       </section>`;
+  }
+
+  function purposeOptionsView(){
+    const edit=state.purposeOptions.find(x=>x.id===state.editingPurposeId)||null;
+    const sorted=[...state.purposeOptions].sort((a,b)=>(Number(a.sort_order)||0)-(Number(b.sort_order)||0)||String(a.label).localeCompare(String(b.label)));
+    return `${top('用途設定','管理外借物品申請時顯示的用途快捷按鈕')}
+      <div class="grid-two">
+        <section class="panel"><div class="panel-head"><div><h3>用途選項</h3><p>前台只顯示啟用中的選項</p></div><button class="btn btn-primary" data-new-purpose>＋ 新增用途</button></div>
+          <div class="table-wrap"><table><thead><tr><th>用途</th><th>排序</th><th>狀態</th><th>操作</th></tr></thead><tbody>
+          ${sorted.length?sorted.map(x=>`<tr><td><strong>${esc(x.label)}</strong></td><td>${Number(x.sort_order)||0}</td><td><span class="tag ${x.active?'green':'gray'}">${x.active?'啟用':'停用'}</span></td><td><div class="row-actions"><button class="btn btn-secondary btn-small" data-edit-purpose="${x.id}">修改</button><button class="btn btn-danger btn-small" data-delete-purpose="${x.id}">刪除</button></div></td></tr>`).join(''):'<tr><td colspan="4" class="empty">尚未建立用途選項</td></tr>'}
+          </tbody></table></div>
+        </section>
+        <section class="panel"><div class="panel-head"><div><h3>${edit?'修改用途':'新增用途'}</h3><p>例如：個案、小組、外出活動</p></div></div>
+          <form data-purpose-form class="form-card">
+            <div class="form-grid"><div class="field full"><span>用途名稱 *</span><input class="input" name="label" required maxlength="50" value="${attr(edit?.label||'')}"></div><div class="field"><span>排序</span><input class="input" type="number" name="sort_order" min="0" value="${Number(edit?.sort_order??state.purposeOptions.length+1)}"></div><label class="checkline"><input type="checkbox" name="active" ${!edit||edit.active?'checked':''}> 啟用</label></div>
+            <div class="form-actions">${edit?'<button type="button" class="btn btn-secondary" data-cancel-purpose>取消</button>':''}<button class="btn btn-primary" type="submit">${edit?'儲存修改':'新增用途'}</button></div>
+          </form>
+        </section>
+      </div>`;
   }
 
   function bookingsView(){
@@ -221,6 +248,12 @@
     qsa('[data-availability]').forEach(b=>b.onclick=()=>{state.selectedResourceId=b.dataset.availability;state.editingResourceId=null;render();});
     const avForm=qs('[data-av-form]'); if(avForm){avForm.mode.onchange=()=>{qs('[data-av-weekday]').style.display=avForm.mode.value==='weekday'?'grid':'none';qs('[data-av-date]').style.display=avForm.mode.value==='date'?'grid':'none';}; avForm.onsubmit=saveAvailability;}
     qsa('[data-delete-av]').forEach(b=>b.onclick=()=>deleteAvailability(b.dataset.deleteAv));
+    on('[data-new-purpose]','click',()=>{state.editingPurposeId=null;render();});
+    qsa('[data-edit-purpose]').forEach(b=>b.onclick=()=>{state.editingPurposeId=b.dataset.editPurpose;render();});
+    on('[data-cancel-purpose]','click',()=>{state.editingPurposeId=null;render();});
+    on('[data-purpose-form]','submit',savePurpose);
+    qsa('[data-delete-purpose]').forEach(b=>b.onclick=()=>deletePurpose(b.dataset.deletePurpose));
+    const imageInput=qs('[data-resource-form] input[name=image]'); if(imageInput) imageInput.onchange=previewResourceImage;
     qsa('[data-booking-status]').forEach(b=>b.onclick=()=>{const [id,status]=b.dataset.bookingStatus.split(':');updateBooking(id,status);});
     on('[data-signout]','click',async()=>{if(supabase)await supabase.auth.signOut();location.reload();});
   }
@@ -254,11 +287,28 @@
     }catch(err){toast('未能刪除機構：'+errorMessage(err),'error');}
   }
 
-  async function saveResource(e){
-    e.preventDefault(); const fd=new FormData(e.currentTarget); const organization_id=String(fd.get('organization_id')||''); const name=String(fd.get('name')||'').trim();
-    if(!organization_id)return toast('請選擇所屬機構','error'); if(!name)return toast('請輸入名稱','error');
-    const type=state.resourceType; const payload={organization_id,type,name,location:String(fd.get('location')||'').trim()||null,description:String(fd.get('description')||'').trim()||null,capacity:type==='room'?Math.max(1,Number(fd.get('capacity')||1)):1,stock_quantity:type==='item'?Math.max(1,Number(fd.get('stock_quantity')||1)):1,requires_room:type==='item'&&fd.get('requires_room')==='on',active:fd.get('active')==='on'};
+  async function savePurpose(e){
+    e.preventDefault(); const fd=new FormData(e.currentTarget); const label=String(fd.get('label')||'').trim(); const sort_order=Math.max(0,Number(fd.get('sort_order')||0)); const active=fd.get('active')==='on'; if(!label)return toast('請輸入用途名稱','error');
     try{
+      if(DEMO){const dup=state.purposeOptions.some(x=>x.label.toLowerCase()===label.toLowerCase()&&x.id!==state.editingPurposeId);if(dup)throw new Error('用途名稱已存在');if(state.editingPurposeId){Object.assign(state.purposeOptions.find(x=>x.id===state.editingPurposeId),{label,sort_order,active});}else state.purposeOptions.push({id:uid('purpose'),label,sort_order,active});persistDemo();}
+      else{const payload={label,sort_order,active};const r=state.editingPurposeId?await supabase.from('purpose_options').update(payload).eq('id',state.editingPurposeId):await supabase.from('purpose_options').insert(payload);if(r.error)throw r.error;await refreshAll();}
+      state.editingPurposeId=null;toast('用途選項已儲存','success');render();
+    }catch(err){toast(errorMessage(err),'error');}
+  }
+  async function deletePurpose(id){const item=state.purposeOptions.find(x=>x.id===id);if(!item)return;if(!confirm(`確定刪除用途「${item.label}」？`))return;try{if(DEMO){state.purposeOptions=state.purposeOptions.filter(x=>x.id!==id);persistDemo();}else{const r=await supabase.from('purpose_options').delete().eq('id',id);if(r.error)throw r.error;await refreshAll();}state.editingPurposeId=null;toast('用途選項已刪除','success');render();}catch(err){toast(errorMessage(err),'error');}}
+
+  async function saveResource(e){
+    e.preventDefault(); const form=e.currentTarget; const fd=new FormData(form); const organization_id=String(fd.get('organization_id')||''); const name=String(fd.get('name')||'').trim();
+    if(!organization_id)return toast('請選擇所屬機構','error'); if(!name)return toast('請輸入名稱','error');
+    const type=state.resourceType; const existing=state.resources.find(x=>x.id===state.editingResourceId)||null;
+    const payload={organization_id,type,name,location:String(fd.get('location')||'').trim()||null,description:String(fd.get('description')||'').trim()||null,capacity:type==='room'?Math.max(1,Number(fd.get('capacity')||1)):1,stock_quantity:type==='item'?Math.max(1,Number(fd.get('stock_quantity')||1)):1,requires_room:type==='item'&&fd.get('requires_room')==='on',image_url:existing?.image_url||null,active:fd.get('active')==='on'};
+    const imageFile=fd.get('image');
+    try{
+      if(imageFile instanceof File && imageFile.size>0){
+        if(imageFile.size>(DEMO?1200*1024:5*1024*1024)) throw new Error(DEMO?'Demo Mode 圖片請控制在 1.2MB 內':'圖片不可大於 5MB');
+        if(!['image/jpeg','image/png','image/webp'].includes(imageFile.type)) throw new Error('圖片只支援 JPG、PNG 或 WebP');
+        payload.image_url=DEMO?await fileToDataUrl(imageFile):await uploadResourceImage(imageFile,type);
+      }
       if(DEMO){
         const dup=state.resources.some(r=>r.organization_id===organization_id&&r.type===type&&r.name.toLowerCase()===name.toLowerCase()&&r.id!==state.editingResourceId); if(dup)throw new Error('同一機構已有相同名稱的資源');
         if(state.editingResourceId){const r=state.resources.find(x=>x.id===state.editingResourceId);Object.assign(r,payload);state.selectedResourceId=r.id;}
@@ -269,6 +319,16 @@
       }
       state.editingResourceId=null;toast(`${type==='room'?'房間':'物品'}已儲存`,'success');render();
     }catch(err){toast('未能儲存：'+errorMessage(err),'error');}
+  }
+
+  function previewResourceImage(e){
+    const file=e.target.files?.[0]; if(!file)return; const url=URL.createObjectURL(file); const box=qs('.admin-image-box'); if(box)box.innerHTML=`<img data-resource-image-preview src="${url}" alt="預覽">`;
+  }
+  function fileToDataUrl(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result));r.onerror=()=>reject(new Error('未能讀取圖片'));r.readAsDataURL(file);});}
+  async function uploadResourceImage(file,type){
+    const ext=(file.name.split('.').pop()||'jpg').toLowerCase().replace(/[^a-z0-9]/g,'')||'jpg'; const path=`${type}/${Date.now()}-${Math.random().toString(36).slice(2,9)}.${ext}`;
+    const up=await supabase.storage.from('resource-images').upload(path,file,{contentType:file.type,upsert:false}); if(up.error)throw up.error;
+    return supabase.storage.from('resource-images').getPublicUrl(path).data.publicUrl;
   }
 
   async function deleteResource(id){
