@@ -47,6 +47,7 @@
     organizations: [],
     availability: [],
     publicBookings: [],
+    busyPeriods: [],
     resourceBlocks: [],
     purposeOptions: [],
     loadingData: true,
@@ -66,13 +67,14 @@
     return {
       roomId: '',
       date: '',
-      slots: [],
+      duration: '60',
+      customMinutes: 90,
+      startTime: '',
       needsItems: null,
       items: {},
       purpose: '',
       applicantName: '',
       phone: '',
-      organization: '',
       notes: '',
     };
   }
@@ -174,6 +176,7 @@
     state.resourceBlocks = Array.isArray(data.resourceBlocks) ? data.resourceBlocks : [];
     state.purposeOptions = Array.isArray(data.purposeOptions) ? data.purposeOptions : demoSeed().purposeOptions;
     state.publicBookings = buildDemoPublicBookings(state._allBookings);
+    state.busyPeriods = buildDemoBusyPeriods(state._allBookings);
   }
 
   function saveDemoSource() {
@@ -213,21 +216,23 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'resources' }, () => refreshFromSource(true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'resource_availability' }, () => refreshFromSource(true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'resource_blocks' }, () => refreshFromSource(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => refreshFromSource(true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'purpose_options' }, () => refreshFromSource(true))
       .subscribe();
   }
 
   async function loadSupabaseSource() {
     const client = await ensureSupabaseClient();
-    const [orgs, resourcesResult, availabilityResult, blocksResult, publicResult, purposeResult] = await Promise.all([
+    const [orgs, resourcesResult, availabilityResult, blocksResult, publicResult, busyResult, purposeResult] = await Promise.all([
       client.from('organizations').select('*').eq('active', true).order('name'),
       client.from('resources').select('*').eq('active', true).order('type').order('name'),
       client.from('resource_availability').select('*').eq('active', true).order('resource_id'),
       client.from('resource_blocks').select('resource_id,block_date').order('block_date'),
       client.rpc('get_public_resource_bookings'),
+      client.rpc('get_public_resource_busy_periods'),
       client.from('purpose_options').select('*').eq('active', true).order('sort_order').order('label'),
     ]);
-    for (const result of [orgs, resourcesResult, availabilityResult, blocksResult, publicResult, purposeResult]) {
+    for (const result of [orgs, resourcesResult, availabilityResult, blocksResult, publicResult, busyResult, purposeResult]) {
       if (result.error) throw result.error;
     }
     state.organizations = orgs.data || [];
@@ -242,6 +247,14 @@
       date: row.booking_date,
       returnDate: row.loan_end_date || row.booking_date,
       status: row.status || 'approved',
+      quantity: Number(row.quantity || 1),
+    }));
+    state.busyPeriods = (busyResult.data || []).map(row => ({
+      resourceId: row.resource_id,
+      date: row.booking_date,
+      returnDate: row.loan_end_date || row.booking_date,
+      startTime: shortTime(row.start_time),
+      endTime: shortTime(row.end_time),
       quantity: Number(row.quantity || 1),
     }));
   }
@@ -259,7 +272,9 @@
     if (state.roomFlow.roomId && !rooms.some(room => room.id === state.roomFlow.roomId)) {
       state.roomFlow.roomId = '';
       state.roomFlow.date = '';
-      state.roomFlow.slots = [];
+      state.roomFlow.duration = '60';
+      state.roomFlow.customMinutes = 90;
+      state.roomFlow.startTime = '';
       state.roomFlow.items = {};
     }
   }
@@ -314,9 +329,23 @@
       .filter(Boolean);
   }
 
+  function buildDemoBusyPeriods(bookings) {
+    return (bookings || [])
+      .filter(booking => ['approved', 'completed', '已批准', '已歸還'].includes(booking.status))
+      .map(booking => ({
+        resourceId: booking.resource_id,
+        date: booking.booking_date || booking.date,
+        returnDate: booking.loan_end_date || booking.returnDate || booking.booking_date || booking.date,
+        startTime: shortTime(booking.start_time || '09:00'),
+        endTime: shortTime(booking.end_time || '18:00'),
+        quantity: Number(booking.quantity || 1),
+      }));
+  }
+
   function readableError(error) {
     const message = error?.message || error?.details || String(error || '資料同步失敗');
     if (/RESOURCE_DATE_BLOCKED/i.test(message)) return '所選日期已由管理員設為不可借用，請重新選擇日期';
+    if (/get_public_resource_busy_periods|admin_upsert_booking_record/i.test(message) && /does not exist|schema cache|could not find/i.test(message)) return 'Supabase 尚未套用 v7 預約流程／日曆管理 SQL';
     if (/resource_blocks/i.test(message) && /does not exist|schema cache|could not find/i.test(message)) return 'Supabase 尚未套用 v6 借用狀況日曆 SQL';
     if (/get_public_resource_bookings/i.test(message)) return 'Supabase 尚未套用前後台同步 SQL';
     if (/permission denied|row-level security/i.test(message)) return 'Supabase 讀取權限尚未套用同步 SQL';
@@ -414,11 +443,13 @@
   function renderRoomBooking() {
     const f = state.roomFlow;
     const selectedRoom = rooms.find(r => r.id === f.roomId);
-    const slots = selectedRoom && f.date ? getRoomSlots(selectedRoom.id, f.date) : [];
+    const durationMinutes = roomDurationMinutes(f);
+    const startTimes = selectedRoom && f.date && durationMinutes ? getRoomStartTimes(selectedRoom.id, f.date, durationMinutes) : [];
+    const endTime = f.startTime && durationMinutes ? addMinutesToTime(f.startTime, durationMinutes) : '';
     return `
-      ${renderHeader('預約房間', '按步驟完成申請', 'reserveType')}
+      ${renderHeader('預約房間', '選擇房間、日期及預約時間', 'reserveType')}
       <section class="card step-card">
-        ${renderStep(4, 1, ['選擇房間', '選擇日期', '選擇時段', '同日物品'])}
+        ${renderStep(5, 1, ['房間', '日期', '預約時間', '開始時間', '同日物品'])}
 
         <div class="field-block">
           <div class="field-title"><span class="order">1</span>選擇房間</div>
@@ -427,8 +458,8 @@
               <button class="room-card ${f.roomId === room.id ? 'selected' : ''}" data-room-id="${room.id}">
                 <div class="room-photo ${room.image_url ? 'has-image' : ''}">${room.image_url ? `<img src="${escapeAttr(room.image_url)}" alt="${escapeAttr(room.name)}">` : '<span class="resource-image-placeholder">房間圖片</span>'}</div>
                 <div class="room-meta">
-                  <h3>${room.name}</h3>
-                  <p>可容納 ${room.capacity} 人・${room.description}</p>
+                  <h3>${escapeHtml(room.name)}</h3>
+                  <p>可容納 ${room.capacity} 人${room.description ? `・${escapeHtml(room.description)}` : ''}</p>
                 </div>
               </button>
             `).join('')}
@@ -441,18 +472,21 @@
         </div>
 
         <div class="field-block">
-          <div class="field-title"><span class="order">3</span>選擇借用時段</div>
-          <div class="helper">可選多個時段</div>
-          <div class="slot-wrap" style="margin-top:12px;">
-            ${slots.length ? slots.map(slot => `
-              <button class="slot-pill ${f.slots.includes(slot) ? 'selected' : ''}" data-room-slot="${slot}">${slot}</button>
-            `).join('') : '<div class="helper">請先選擇房間及日期</div>'}
+          <div class="field-title"><span class="order">3</span>預約時間</div>
+          <div class="duration-options">
+            ${[['30','半小時'],['60','1 小時'],['120','2 小時'],['other','其他']].map(([value,label])=>`<button type="button" class="duration-option ${String(f.duration)===value?'selected':''}" data-room-duration="${value}">${label}</button>`).join('')}
           </div>
+          ${f.duration === 'other' ? `<div class="custom-duration-row"><label class="field-label">自訂時長（分鐘）</label><input class="input" type="number" min="30" max="480" step="30" data-room-custom-minutes value="${Number(f.customMinutes || 90)}"><div class="helper">以 30 分鐘為單位</div></div>` : ''}
         </div>
 
         <div class="field-block">
-          <div class="field-title"><span class="order">4</span>需要同日借用物品嗎？</div>
-          <div class="helper">物品只可即日在中心使用</div>
+          <div class="field-title"><span class="order">4</span>開始時間</div>
+          ${selectedRoom && f.date ? (startTimes.length ? `<select class="input" data-room-start-time><option value="">請選擇開始時間</option>${startTimes.map(time=>`<option value="${time}" ${f.startTime===time?'selected':''}>${time} - ${addMinutesToTime(time,durationMinutes)}</option>`).join('')}</select>${f.startTime&&endTime?`<div class="selected-time-summary">預約時段：<strong>${f.startTime} - ${endTime}</strong></div>`:''}` : '<div class="notice-box warning"><div class="notice-icon">i</div><div><strong>暫無可用開始時間</strong><span>請更改日期或預約時長。</span></div></div>') : '<div class="helper">請先選擇房間及日期</div>'}
+        </div>
+
+        <div class="field-block">
+          <div class="field-title"><span class="order">5</span>需要同日借用物品嗎？</div>
+          <div class="helper">可配合房間預約的物品會於下一步選擇</div>
           <div class="toggle-row" style="margin-top:12px;">
             <button class="toggle-button ${f.needsItems === true ? 'selected' : ''}" data-needs-items="yes">需要</button>
             <button class="toggle-button ${f.needsItems === false ? 'selected' : ''}" data-needs-items="no">不需要</button>
@@ -469,16 +503,16 @@
     return `
       ${renderHeader('選擇同日使用物品', '房間預約附加物品', 'roomBooking')}
       <section class="card step-card">
-        ${renderStep(4, 4, ['選擇房間', '選擇日期', '選擇時段', '同日物品'])}
+        ${renderStep(5, 5, ['房間', '日期', '預約時間', '開始時間', '同日物品'])}
         <div class="notice-box">
           <div class="notice-icon">i</div>
           <div>
             <strong>房間預約可一併選擇物品</strong>
-            <span>已勾選「只可配合房間」的物品只可在此流程預約；其他物品亦可另外單獨外借。</span>
+            <span>所有可配合房間使用的物品都會在此顯示；如物品同時容許單獨外借，亦可在「外借物品」另外預約。</span>
           </div>
         </div>
         <div class="item-grid">
-          ${centerUseItems.map(item => renderItemCard(item, state.roomFlow.items[item.id] || 0, 'room-item')).join('')}
+          ${centerUseItems.length ? centerUseItems.map(item => renderItemCard(item, state.roomFlow.items[item.id] || 0, 'room-item')).join('') : '<div class="helper">目前沒有可配合房間使用的物品</div>'}
         </div>
         <div class="helper" style="margin:12px 0 18px;">已選 ${selectedItems} 件物品</div>
         <div class="inline-actions">
@@ -492,36 +526,22 @@
   function renderRoomConfirm() {
     const room = rooms.find(r => r.id === state.roomFlow.roomId);
     const items = selectedItemSummary(centerUseItems, state.roomFlow.items);
+    const durationMinutes = roomDurationMinutes(state.roomFlow);
+    const endTime = state.roomFlow.startTime ? addMinutesToTime(state.roomFlow.startTime, durationMinutes) : '';
     return `
-      ${renderHeader('確認房間預約', '填寫申請資料', state.roomFlow.needsItems ? 'roomItems' : 'roomBooking')}
+      ${renderHeader('確認房間預約', '填寫申請者資料', state.roomFlow.needsItems ? 'roomItems' : 'roomBooking')}
       <section class="card step-card">
         <div class="summary-card">
-          <div class="summary-row"><span>房間</span><strong>${room ? room.name : '-'}</strong></div>
+          <div class="summary-row"><span>房間</span><strong>${room ? escapeHtml(room.name) : '-'}</strong></div>
           <div class="summary-row"><span>日期</span><strong>${formatDate(state.roomFlow.date)}</strong></div>
-          <div class="summary-row"><span>時段</span><strong>${state.roomFlow.slots.join('、') || '-'}</strong></div>
-          <div class="summary-row"><span>同日物品</span><strong>${items.length ? items.map(x => `${x.name} × ${x.qty}`).join('、') : '不需要'}</strong></div>
+          <div class="summary-row"><span>預約時間</span><strong>${state.roomFlow.startTime && endTime ? `${state.roomFlow.startTime} - ${endTime}（${durationLabel(durationMinutes)}）` : '-'}</strong></div>
+          <div class="summary-row"><span>同日物品</span><strong>${items.length ? items.map(x => `${escapeHtml(x.name)} × ${x.qty}`).join('、') : '不需要'}</strong></div>
         </div>
-        <div class="field-block" style="margin-top:16px;">
-          <label class="field-label">用途 *</label>
-          <textarea class="textarea" data-field="room-purpose" placeholder="例如：小組活動、會議、講座">${escapeHtml(state.roomFlow.purpose)}</textarea>
-        </div>
-        <div class="form-grid">
-          <div>
-            <label class="field-label">申請人姓名 *</label>
-            <input class="input" data-field="room-name" value="${escapeAttr(state.roomFlow.applicantName)}" placeholder="請輸入姓名" />
-          </div>
-          <div>
-            <label class="field-label">聯絡電話 *</label>
-            <input class="input" data-field="room-phone" value="${escapeAttr(state.roomFlow.phone)}" placeholder="請輸入電話" />
-          </div>
-          <div>
-            <label class="field-label">所屬單位</label>
-            <input class="input" data-field="room-organization" value="${escapeAttr(state.roomFlow.organization)}" placeholder="例如：中心／機構名稱" />
-          </div>
-          <div>
-            <label class="field-label">備註</label>
-            <textarea class="textarea" data-field="room-notes" placeholder="如有特別安排可在此註明">${escapeHtml(state.roomFlow.notes)}</textarea>
-          </div>
+        <div class="form-grid" style="margin-top:16px;">
+          <div><label class="field-label">申請者姓名 *</label><input class="input" data-field="room-name" value="${escapeAttr(state.roomFlow.applicantName)}" placeholder="請輸入姓名" /></div>
+          <div><label class="field-label">電話 *</label><input class="input" data-field="room-phone" value="${escapeAttr(state.roomFlow.phone)}" placeholder="請輸入電話" /></div>
+          <div class="full-width-field"><label class="field-label">用途 *</label>${renderPurposeButtons('roomFlow')}</div>
+          <div class="full-width-field"><label class="field-label">備註</label><textarea class="textarea" data-field="room-notes" placeholder="如有特別安排可在此註明">${escapeHtml(state.roomFlow.notes)}</textarea></div>
         </div>
         <div class="inline-actions" style="margin-top:16px;">
           <button class="btn btn-secondary" data-nav-page="${state.roomFlow.needsItems ? 'roomItems' : 'roomBooking'}">上一步</button>
@@ -659,7 +679,7 @@
 
   function renderStep(total, active, labels) {
     return `
-      <div class="stepper ${total === 3 ? 'three' : ''}">
+      <div class="stepper" style="--step-count:${total}">
         ${labels.map((label, index) => {
           const stepNo = index + 1;
           const cls = stepNo < active ? 'done' : stepNo === active ? 'active' : '';
@@ -775,7 +795,9 @@
     document.querySelectorAll('[data-room-id]').forEach(btn => {
       btn.addEventListener('click', () => {
         state.roomFlow.roomId = btn.dataset.roomId;
-        state.roomFlow.slots = [];
+        state.roomFlow.date = '';
+        state.roomFlow.startTime = '';
+        state.roomFlow.items = {};
         render();
       });
     });
@@ -794,7 +816,8 @@
         const [kind, iso] = btn.dataset.selectDate.split(':');
         if (kind === 'room') {
           state.roomFlow.date = iso;
-          state.roomFlow.slots = [];
+          state.roomFlow.startTime = '';
+          state.roomFlow.items = {};
         } else {
           state.loanFlow.startDate = iso;
           state.loanFlow.returnDate = addDays(iso, 3);
@@ -803,14 +826,29 @@
       });
     });
 
-    document.querySelectorAll('[data-room-slot]').forEach(btn => {
+    document.querySelectorAll('[data-room-duration]').forEach(btn => {
       btn.addEventListener('click', () => {
-        const slot = btn.dataset.roomSlot;
-        const idx = state.roomFlow.slots.indexOf(slot);
-        if (idx >= 0) state.roomFlow.slots.splice(idx, 1);
-        else state.roomFlow.slots.push(slot);
+        state.roomFlow.duration = btn.dataset.roomDuration;
+        state.roomFlow.startTime = '';
+        persistForms();
         render();
       });
+    });
+
+    const customDuration = document.querySelector('[data-room-custom-minutes]');
+    if (customDuration) customDuration.addEventListener('change', () => {
+      const value = Math.max(30, Math.min(480, Math.round(Number(customDuration.value || 90) / 30) * 30));
+      state.roomFlow.customMinutes = value;
+      state.roomFlow.startTime = '';
+      persistForms();
+      render();
+    });
+
+    const roomStartTime = document.querySelector('[data-room-start-time]');
+    if (roomStartTime) roomStartTime.addEventListener('change', () => {
+      state.roomFlow.startTime = roomStartTime.value;
+      persistForms();
+      render();
     });
 
     document.querySelectorAll('[data-needs-items]').forEach(btn => {
@@ -906,27 +944,29 @@
     const key = e.target.dataset.field;
     const value = e.target.value;
     const mapping = {
-      'room-purpose': ['roomFlow', 'purpose'],
       'room-name': ['roomFlow', 'applicantName'],
       'room-phone': ['roomFlow', 'phone'],
-      'room-organization': ['roomFlow', 'organization'],
       'room-notes': ['roomFlow', 'notes'],
-      'loan-purpose': ['loanFlow', 'purpose'],
       'loan-name': ['loanFlow', 'applicantName'],
       'loan-phone': ['loanFlow', 'phone'],
       'loan-notes': ['loanFlow', 'notes'],
     };
+    if (!mapping[key]) return;
     const [obj, prop] = mapping[key];
     state[obj][prop] = value;
     persistForms();
   }
 
   function goRoomNext() {
-    if (!state.roomFlow.roomId) return toast('請先選擇房間', 'error');
-    if (!state.roomFlow.date) return toast('請先選擇日期', 'error');
-    if (!state.roomFlow.slots.length) return toast('請先選擇至少一個時段', 'error');
-    if (state.roomFlow.needsItems === null) return toast('請選擇是否需要同日借用物品', 'error');
-    state.page = state.roomFlow.needsItems ? 'roomItems' : 'roomConfirm';
+    const f = state.roomFlow;
+    const durationMinutes = roomDurationMinutes(f);
+    if (!f.roomId) return toast('請先選擇房間', 'error');
+    if (!f.date) return toast('請先選擇日期', 'error');
+    if (!durationMinutes) return toast('請選擇有效的預約時間', 'error');
+    if (!f.startTime) return toast('請選擇開始時間', 'error');
+    if (!getRoomStartTimes(f.roomId, f.date, durationMinutes).includes(f.startTime)) return toast('所選開始時間已不可用，請重新選擇', 'error');
+    if (f.needsItems === null) return toast('請選擇是否需要同日借用物品', 'error');
+    state.page = f.needsItems ? 'roomItems' : 'roomConfirm';
     state.currentTab = 'reserve';
     render();
   }
@@ -958,67 +998,61 @@
   function createDemoRoomRequest(room, f) {
     const groupRef = makeBookingNo('R');
     const now = new Date().toISOString();
-    const createdRoomIds = [];
     const bookings = state._allBookings || (state._allBookings = []);
-    f.slots.forEach((slot, index) => {
-      const times = parseSlot(slot);
-      const id = localId('booking');
-      createdRoomIds.push(id);
+    const durationMinutes = roomDurationMinutes(f);
+    const endTime = addMinutesToTime(f.startTime, durationMinutes);
+    const roomBookingId = localId('booking');
+    bookings.unshift({
+      id: roomBookingId,
+      reference_no: `${groupRef}-1`,
+      resource_id: room.id,
+      booking_date: f.date,
+      start_time: f.startTime,
+      end_time: endTime,
+      quantity: 1,
+      attendees: 1,
+      purpose: f.purpose.trim(),
+      applicant_name: f.applicantName.trim(),
+      phone: f.phone.trim(),
+      applicant_note: f.notes.trim() || null,
+      related_booking_id: null,
+      loan_end_date: null,
+      status: 'pending',
+      created_at: now,
+    });
+    const selectedItems = itemRequestPayload(centerUseItems, f.items);
+    selectedItems.forEach((item, index) => {
       bookings.unshift({
-        id,
-        reference_no: `${groupRef}-${index + 1}`,
-        resource_id: room.id,
+        id: localId('booking'),
+        reference_no: `${groupRef}-I${index + 1}`,
+        resource_id: item.resource_id,
         booking_date: f.date,
-        start_time: times.start,
-        end_time: times.end,
-        quantity: 1,
+        start_time: f.startTime,
+        end_time: endTime,
+        quantity: item.quantity,
         attendees: 1,
         purpose: f.purpose.trim(),
         applicant_name: f.applicantName.trim(),
         phone: f.phone.trim(),
         applicant_note: f.notes.trim() || null,
-        related_booking_id: null,
+        related_booking_id: roomBookingId,
         loan_end_date: null,
         status: 'pending',
         created_at: now,
       });
     });
-    const selectedItems = itemRequestPayload(centerUseItems, f.items);
-    if (selectedItems.length) {
-      const times = overallSlotRange(f.slots);
-      selectedItems.forEach((item, index) => {
-        bookings.unshift({
-          id: localId('booking'),
-          reference_no: `${groupRef}-I${index + 1}`,
-          resource_id: item.resource_id,
-          booking_date: f.date,
-          start_time: times.start,
-          end_time: times.end,
-          quantity: item.quantity,
-          attendees: 1,
-          purpose: f.purpose.trim(),
-          applicant_name: f.applicantName.trim(),
-          phone: f.phone.trim(),
-          related_booking_id: createdRoomIds[0] || null,
-          loan_end_date: null,
-          status: 'pending',
-          created_at: now,
-        });
-      });
-    }
     saveDemoSource();
     return groupRef;
   }
 
   async function createSupabaseRoomRequest(room, f) {
     const client = await ensureSupabaseClient();
+    const durationMinutes = roomDurationMinutes(f);
+    const endTime = addMinutesToTime(f.startTime, durationMinutes);
     const { data, error } = await client.rpc('submit_public_room_request', {
       p_room_resource_id: room.id,
       p_booking_date: f.date,
-      p_slots: f.slots.map(slot => {
-        const parsed = parseSlot(slot);
-        return { start_time: parsed.start, end_time: parsed.end };
-      }),
+      p_slots: [{ start_time: f.startTime, end_time: endTime }],
       p_items: itemRequestPayload(centerUseItems, f.items),
       p_purpose: f.purpose.trim(),
       p_applicant_name: f.applicantName.trim(),
@@ -1104,18 +1138,6 @@
       .filter(item => item.quantity > 0);
   }
 
-  function parseSlot(slot) {
-    const parts = String(slot).split('-').map(part => part.trim());
-    return { start: parts[0] || '09:00', end: parts[1] || '10:00' };
-  }
-
-  function overallSlotRange(slots) {
-    const parsed = slots.map(parseSlot);
-    const starts = parsed.map(item => item.start).sort();
-    const ends = parsed.map(item => item.end).sort();
-    return { start: starts[0] || '09:00', end: ends[ends.length - 1] || '10:00' };
-  }
-
   function localId(prefix) {
     return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
   }
@@ -1138,18 +1160,79 @@
     return 'home';
   }
 
-  function getRoomSlots(roomId, dateIso) {
+  function getRoomAvailabilityWindows(roomId, dateIso) {
     if (!roomId || !dateIso || isResourceBlocked(roomId, dateIso)) return [];
     const weekday = new Date(`${dateIso}T12:00:00`).getDay();
     return state.availability
       .filter(rule => rule.resource_id === roomId && rule.active !== false)
       .filter(rule => availabilityMatchesDate(rule, dateIso, weekday))
-      .sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)))
-      .map(rule => `${shortTime(rule.start_time)} - ${shortTime(rule.end_time)}`);
+      .map(rule => ({ start: shortTime(rule.start_time), end: shortTime(rule.end_time) }))
+      .filter(window => window.start && window.end && window.end > window.start)
+      .sort((a,b)=>a.start.localeCompare(b.start));
+  }
+
+  function roomDurationMinutes(flow) {
+    if (!flow) return 0;
+    if (flow.duration === 'other') {
+      const value = Number(flow.customMinutes || 0);
+      if (!Number.isFinite(value) || value < 30 || value > 480) return 0;
+      return Math.round(value / 30) * 30;
+    }
+    const value = Number(flow.duration || 0);
+    return [30,60,120].includes(value) ? value : 0;
+  }
+
+  function durationLabel(minutes) {
+    if (minutes === 30) return '半小時';
+    if (minutes === 60) return '1 小時';
+    if (minutes === 120) return '2 小時';
+    if (minutes % 60 === 0) return `${minutes/60} 小時`;
+    if (minutes > 60) return `${Math.floor(minutes/60)} 小時 ${minutes%60} 分鐘`;
+    return `${minutes} 分鐘`;
+  }
+
+  function timeToMinutes(time) {
+    const [h,m] = String(time||'00:00').split(':').map(Number);
+    return h*60+m;
+  }
+
+  function minutesToTime(minutes) {
+    const value = Math.max(0, Math.min(24*60, minutes));
+    const h = Math.floor(value/60), m=value%60;
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  }
+
+  function addMinutesToTime(time, minutes) {
+    return minutesToTime(timeToMinutes(time)+Number(minutes||0));
+  }
+
+  function busyPeriodsForRoom(roomId, dateIso) {
+    return (state.busyPeriods || []).filter(p => p.resourceId === roomId && p.date === dateIso && (p.returnDate || p.date) === dateIso);
+  }
+
+  function timeRangesOverlap(startA,endA,startB,endB) {
+    return startA < endB && endA > startB;
+  }
+
+  function getRoomStartTimes(roomId, dateIso, durationMinutes) {
+    if (!durationMinutes || durationMinutes < 30) return [];
+    const windows = getRoomAvailabilityWindows(roomId,dateIso);
+    const busy = busyPeriodsForRoom(roomId,dateIso);
+    const options = new Set();
+    for (const window of windows) {
+      const startMin = timeToMinutes(window.start);
+      const endMin = timeToMinutes(window.end);
+      for (let cursor=startMin; cursor+durationMinutes<=endMin; cursor+=30) {
+        const start=minutesToTime(cursor), end=minutesToTime(cursor+durationMinutes);
+        const clashes = busy.some(period => timeRangesOverlap(start,end,period.startTime,period.endTime));
+        if (!clashes) options.add(start);
+      }
+    }
+    return [...options].sort();
   }
 
   function isRoomDateAvailable(roomId, dateIso) {
-    return !isResourceBlocked(roomId, dateIso) && getRoomSlots(roomId, dateIso).length > 0;
+    return !isResourceBlocked(roomId,dateIso) && getRoomStartTimes(roomId,dateIso,30).length > 0;
   }
 
   function availabilityMatchesDate(rule, dateIso, weekday) {
