@@ -192,31 +192,26 @@
   function renderDesktopShell() {
     const meta = desktopPageMeta();
     return `
-      <div class="desktop-public">
-        <aside class="desktop-sidebar">
-          <div class="desktop-brand">
+      <div class="desktop-public desktop-big-button-ui">
+        <header class="desktop-simple-header">
+          <button class="desktop-logo-button" data-nav-page="home" aria-label="返回首頁">
             <img src="assets/app-icon.svg" alt="">
-            <div><strong>資源預約</strong><span>Booking System</span></div>
-          </div>
-          <div class="desktop-nav-label">主要功能</div>
-          <nav class="desktop-nav">
-            <button class="desktop-nav-btn ${state.currentTab === 'home' ? 'active' : ''}" data-nav-page="home">${icons.home}<span>首頁</span></button>
-            <button class="desktop-nav-btn ${state.currentTab === 'reserve' ? 'active' : ''}" data-nav-page="reserveType">${icons.calendar}<span>提交預約</span></button>
-            <button class="desktop-nav-btn ${state.currentTab === 'query' ? 'active' : ''}" data-nav-page="query">${icons.search}<span>資源借用查詢</span></button>
+            <span><strong>房間及物品預約系統</strong><small>Room & Resource Booking</small></span>
+          </button>
+          <nav class="desktop-simple-nav" aria-label="主要導覽">
+            <button class="${state.currentTab === 'home' ? 'active' : ''}" data-nav-page="home">${icons.home}<span>首頁</span></button>
+            <button class="${state.currentTab === 'reserve' ? 'active' : ''}" data-nav-page="reserveType">${icons.calendar}<span>預約</span></button>
+            <button class="${state.currentTab === 'query' ? 'active' : ''}" data-nav-page="query">${icons.search}<span>查詢</span></button>
           </nav>
-          <div class="desktop-sidebar-spacer"></div>
-          <a class="desktop-admin-link" href="admin.html">${icons.user}<span>管理員登入</span></a>
-          <div class="desktop-cloud-note">GitHub · Vercel · Supabase</div>
-        </aside>
-        <div class="desktop-main">
-          <header class="desktop-topbar">
-            <div><h1>${meta.title}</h1><p>${meta.subtitle}</p></div>
-            <div class="desktop-top-actions">
-              <span class="desktop-sync-dot"></span>跨平台同步預約系統
-            </div>
-          </header>
-          <main class="desktop-content">${renderScreen()}</main>
-        </div>
+          <a class="desktop-admin-entry" href="admin.html">${icons.user}<span>管理員登入</span></a>
+        </header>
+        <main class="desktop-big-main">
+          <div class="desktop-page-heading">
+            <h1>${meta.title}</h1>
+            <p>${meta.subtitle}</p>
+          </div>
+          <div class="desktop-content desktop-action-content">${renderScreen()}</div>
+        </main>
       </div>
     `;
   }

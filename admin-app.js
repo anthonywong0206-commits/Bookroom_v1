@@ -163,10 +163,13 @@
       };
     }
     async createOrganization(data) { const row={id:uid(),active:true,created_at:nowIso(),...data}; this.orgs.push(row); return row; }
+    async updateOrganization(data) { const i=this.orgs.findIndex(x=>x.id===data.id); if(i<0) throw new Error('找不到機構'); this.orgs[i]={...this.orgs[i],...data}; return this.orgs[i]; }
+    async deleteOrganization(id) { const resourceIds=this.resources.filter(x=>x.organization_id===id).map(x=>x.id); if(this.bookings.some(b=>resourceIds.includes(b.resource_id))) throw new Error('此機構已有借用紀錄，為保障歷史資料，請先停用相關資源而不要刪除。'); this.rules=this.rules.filter(x=>!resourceIds.includes(x.resource_id)); this.resources=this.resources.filter(x=>x.organization_id!==id); this.orgs=this.orgs.filter(x=>x.id!==id); }
     async upsertResource(data) {
       if (data.id) { const i=this.resources.findIndex(x=>x.id===data.id); this.resources[i]={...this.resources[i],...data}; return this.resources[i]; }
       const row={id:uid(),created_at:nowIso(),...data}; this.resources.push(row); return row;
     }
+    async deleteResource(id) { if(this.bookings.some(b=>b.resource_id===id)) throw new Error('此資源已有借用紀錄，為保障歷史資料，請改為停用資源。'); this.rules=this.rules.filter(x=>x.resource_id!==id); this.resources=this.resources.filter(x=>x.id!==id); }
     async createRule(data) { const row={id:uid(),active:true,...data}; this.rules.push(row); return row; }
     async deleteRule(id) { this.rules=this.rules.filter(x=>x.id!==id); }
     async getRemaining(resourceId,date,start,end) {
@@ -213,10 +216,13 @@
       return {orgs:orgRes.data||[],resources:resRes.data||[],rules:ruleRes.data||[],bookings:bookRes.data||[]};
     }
     async createOrganization(data) { const {data:row,error}=await this.client.from('organizations').insert(data).select().single();if(error)throw error;return row; }
+    async updateOrganization(data) { const {id,...changes}=data; const {data:row,error}=await this.client.from('organizations').update(changes).eq('id',id).select().single(); if(error)throw error; return row; }
+    async deleteOrganization(id) { const {error}=await this.client.from('organizations').delete().eq('id',id); if(error)throw error; }
     async upsertResource(data) {
       if(data.id){const {id,...changes}=data;const {data:row,error}=await this.client.from('resources').update(changes).eq('id',id).select().single();if(error)throw error;return row;}
       const {data:row,error}=await this.client.from('resources').insert(data).select().single();if(error)throw error;return row;
     }
+    async deleteResource(id) { const {error}=await this.client.from('resources').delete().eq('id',id); if(error)throw error; }
     async createRule(data) { const {data:row,error}=await this.client.from('resource_availability').insert(data).select().single();if(error)throw error;return row; }
     async deleteRule(id) { const {error}=await this.client.from('resource_availability').delete().eq('id',id);if(error)throw error; }
     async getRemaining(resourceId,date,start,end) {
@@ -418,13 +424,27 @@
 
   function resourcesView() {
     const rows=state.resources.filter(r=>(!state.selectedOrgId||r.organization_id===state.selectedOrgId)&&r.type===state.resourceType);
-    return `<div class="page-head"><div><h2>管理機構資源</h2><p>房間與物品可分開設定；物品預設可獨立借用。</p></div><div class="page-actions"><button class="btn btn-light" data-add-org="1">${icon('building','nav-ico')}新增機構</button><button class="btn btn-primary" data-add-resource="1">${icon('plus','nav-ico')}新增${state.resourceType==='room'?'房間':'物品'}</button></div></div>
-      <section class="panel">
-        <div class="panel-head"><div class="panel-title"><div class="stat-icon">${icon('settings','nav-ico')}</div><div><h3>機構設定／資源管理</h3><p>管理名稱、名額、庫存、日期及時段</p></div></div></div>
+    const selectedOrg=getOrg(state.selectedOrgId);
+    const selectedOrgResources=state.resources.filter(r=>r.organization_id===state.selectedOrgId);
+    const canAddResource=Boolean(state.selectedOrgId);
+    return `<div class="page-head"><div><h2>管理機構資源</h2><p>新增、修改或刪除機構，並管理旗下房間、物品、名額及時段。</p></div><div class="page-actions"><button class="btn btn-light" data-add-org="1">${icon('building','nav-ico')}新增機構</button><button class="btn btn-primary" data-add-resource="1" ${canAddResource?'':'disabled'}>${icon('plus','nav-ico')}新增${state.resourceType==='room'?'房間':'物品'}</button></div></div>
+      <section class="panel org-manager-panel">
+        <div class="panel-head"><div class="panel-title"><div class="stat-icon teal">${icon('building','nav-ico')}</div><div><h3>機構管理</h3><p>先選擇機構，再管理名稱、狀態及旗下資源</p></div></div><span class="badge active">${state.orgs.length} 個機構</span></div>
         <div class="panel-body">
-          <div class="toolbar"><div class="toolbar-left"><div class="field"><label>機構</label><select class="select" id="admin-org-select" style="min-width:220px">${orgOptions(state.selectedOrgId)}</select></div></div><div class="toolbar-right"><div class="segmented"><button data-resource-type="room" class="${state.resourceType==='room'?'active':''}">${icon('resource','nav-ico')} 房間管理</button><button data-resource-type="item" class="${state.resourceType==='item'?'active':''}">${icon('box','nav-ico')} 物品管理</button></div></div></div>
+          <div class="org-management-grid">
+            <div class="field"><label>目前機構</label><select class="select" id="admin-org-select">${orgOptions(state.selectedOrgId)}</select></div>
+            <div class="org-current-card">
+              ${selectedOrg?`<div><span>機構名稱</span><strong>${esc(selectedOrg.name)}</strong><small>${selectedOrgResources.length} 項資源 · ${selectedOrg.active?'啟用中':'已停用'}</small></div><div class="actions"><button class="btn btn-light btn-sm" data-edit-org="${selectedOrg.id}">${icon('edit','nav-ico')}修改</button><button class="btn btn-danger btn-sm" data-delete-org="${selectedOrg.id}">${icon('trash','nav-ico')}刪除</button></div>`:`<div><strong>尚未建立機構</strong><small>請先按「新增機構」。</small></div>`}
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div class="panel-title"><div class="stat-icon">${icon('settings','nav-ico')}</div><div><h3>房間／物品管理</h3><p>${selectedOrg?`目前：${esc(selectedOrg.name)}`:'請先建立機構'}</p></div></div></div>
+        <div class="panel-body">
+          <div class="toolbar"><div class="toolbar-left"><div class="segmented"><button data-resource-type="room" class="${state.resourceType==='room'?'active':''}">${icon('resource','nav-ico')} 房間管理</button><button data-resource-type="item" class="${state.resourceType==='item'?'active':''}">${icon('box','nav-ico')} 物品管理</button></div></div><div class="toolbar-right"><button class="btn btn-primary" data-add-resource="1" ${canAddResource?'':'disabled'}>${icon('plus','nav-ico')}新增${state.resourceType==='room'?'房間':'物品'}</button></div></div>
           <div class="table-wrap"><table><thead><tr><th>資源</th><th>${state.resourceType==='room'?'名額':'數量'}</th><th>可用日期／時段</th><th>借用方式</th><th>狀態</th><th>操作</th></tr></thead><tbody>
-            ${rows.length?rows.map(r=>`<tr><td><div class="resource-name"><span class="resource-icon ${r.type==='item'?'item':''}">${icon(r.type==='room'?'resource':'box','nav-ico')}</span><div>${esc(r.name)}<span class="cell-sub">${esc(r.location||'未設定位置')}</span></div></div></td><td><strong>${r.type==='room'?`${r.capacity} 人`:`${r.stock_quantity} 件`}</strong></td><td>${esc(ruleSummary(r.id))}</td><td>${r.type==='item'?(r.requires_room?'需配合房間預約':'可獨立借用'):'整個房間預約'}</td><td><span class="badge ${r.active?'active':'inactive'}">${r.active?'啟用':'停用'}</span></td><td><div class="actions"><button class="btn btn-light btn-sm" data-edit-resource="${r.id}">${icon('edit','nav-ico')}編輯</button><button class="btn btn-secondary btn-sm" data-rules="${r.id}">${icon('clock','nav-ico')}設定時段</button></div></td></tr>`).join(''):`<tr><td colspan="6"><div class="empty"><strong>未有${state.resourceType==='room'?'房間':'物品'}</strong><span>按「新增」建立第一個資源。</span></div></td></tr>`}
+            ${rows.length?rows.map(r=>`<tr><td><div class="resource-name"><span class="resource-icon ${r.type==='item'?'item':''}">${icon(r.type==='room'?'resource':'box','nav-ico')}</span><div>${esc(r.name)}<span class="cell-sub">${esc(r.location||'未設定位置')}</span></div></div></td><td><strong>${r.type==='room'?`${r.capacity} 人`:`${r.stock_quantity} 件`}</strong></td><td>${esc(ruleSummary(r.id))}</td><td>${r.type==='item'?(r.requires_room?'需配合房間預約':'可獨立借用'):'整個房間預約'}</td><td><span class="badge ${r.active?'active':'inactive'}">${r.active?'啟用':'停用'}</span></td><td><div class="actions"><button class="btn btn-light btn-sm" data-edit-resource="${r.id}">${icon('edit','nav-ico')}編輯</button><button class="btn btn-secondary btn-sm" data-rules="${r.id}">${icon('clock','nav-ico')}設定時段</button><button class="btn btn-danger btn-sm" data-delete-resource="${r.id}">${icon('trash','nav-ico')}刪除</button></div></td></tr>`).join(''):`<tr><td colspan="6"><div class="empty"><strong>未有${state.resourceType==='room'?'房間':'物品'}</strong><span>${selectedOrg?'按「新增」建立第一個資源。':'請先建立機構。'}</span></div></td></tr>`}
           </tbody></table></div>
         </div>
       </section>`;
@@ -519,8 +539,9 @@
     appEl.innerHTML=shellView(view());
   }
 
-  function openOrgModal() {
-    modal('新增機構',`<form id="org-form" class="form-stack"><div class="field"><label>機構名稱 <span class="req">*</span></label><input class="input" name="name" required placeholder="例如：市民活動中心"></div></form>`, `<button class="btn btn-light" data-close-modal="1">取消</button><button class="btn btn-primary" type="submit" form="org-form">建立機構</button>`);
+  function openOrgModal(id=null) {
+    const org=id?getOrg(id):null;
+    modal(org?'修改機構':'新增機構',`<form id="org-form" class="form-stack"><input type="hidden" name="id" value="${esc(org?.id||'')}"><div class="field"><label>機構名稱 <span class="req">*</span></label><input class="input" name="name" required value="${esc(org?.name||'')}" placeholder="例如：市民活動中心"></div><label class="checkbox-line"><input type="checkbox" name="active" ${org?.active===false?'':'checked'}><span><strong>啟用機構</strong><br><small>停用後一般用戶不會看到此機構及旗下資源。</small></span></label></form>`, `<button class="btn btn-light" data-close-modal="1">取消</button><button class="btn btn-primary" type="submit" form="org-form">${org?'儲存更改':'建立機構'}</button>`);
   }
   function openResourceModal(id=null) {
     const r=id?getResource(id):null;
@@ -629,8 +650,11 @@
     if(target.dataset.resourceType){state.resourceType=target.dataset.resourceType;renderApp();return;}
     if(target.dataset.bookingType){syncBookingDraftFromInputs();state.resourceType=target.dataset.bookingType;resetBookingResource();renderApp();return;}
     if(target.dataset.addOrg){openOrgModal();return;}
-    if(target.dataset.addResource){openResourceModal();return;}
+    if(target.dataset.editOrg){openOrgModal(target.dataset.editOrg);return;}
+    if(target.dataset.deleteOrg){if(confirm('確定刪除此機構？如機構已有借用紀錄，系統會拒絕刪除以保障歷史資料。')){try{await state.adapter.deleteOrganization(target.dataset.deleteOrg);toast('機構已刪除');await refreshData();}catch(e){toast(cleanError(e),'error');}}return;}
+    if(target.dataset.addResource){if(!state.selectedOrgId)return toast('請先建立或選擇機構。','error');openResourceModal();return;}
     if(target.dataset.editResource){openResourceModal(target.dataset.editResource);return;}
+    if(target.dataset.deleteResource){if(confirm('確定刪除此資源？如已有借用紀錄，系統會拒絕刪除。')){try{await state.adapter.deleteResource(target.dataset.deleteResource);toast('資源已刪除');await refreshData();}catch(e){toast(cleanError(e),'error');}}return;}
     if(target.dataset.rules){openRulesModal(target.dataset.rules);return;}
     if(target.dataset.deleteRule){if(confirm('確定刪除此可預約時段？')){try{await state.adapter.deleteRule(target.dataset.deleteRule);await refreshData({render:false});openRulesModal(target.dataset.resourceId);toast('時段已刪除');}catch(e){toast(cleanError(e),'error');}}return;}
     if(target.dataset.slotStart){await selectSlot(target.dataset.slotStart,target.dataset.slotEnd);return;}
@@ -649,11 +673,17 @@
         if(state.authTab==='signin'){const init=await state.adapter.signIn(fd.email,fd.password);Object.assign(state,init);await postLogin();toast('登入成功');}
         else {const data=await state.adapter.signUp(fd.email,fd.password,fd.fullName,fd.phone||'');toast(data?.session?'帳戶已建立':'帳戶已建立，請按電郵確認連結後登入','info');state.authTab='signin';renderApp();}
       }
-      if(form.id==='org-form'){await state.adapter.createOrganization({name:String(fd.name).trim(),active:true});closeModal();toast('機構已建立');await refreshData();}
+      if(form.id==='org-form'){const name=String(fd.name||'').trim(); if(!name) throw new Error('請輸入機構名稱。'); const payload={id:fd.id||undefined,name,active:form.querySelector('[name="active"]')?.checked!==false}; if(payload.id){await state.adapter.updateOrganization(payload);toast('機構資料已更新');}else{const row=await state.adapter.createOrganization({name,active:payload.active});state.selectedOrgId=row.id;toast('機構已建立');} closeModal();await refreshData();}
       if(form.id==='resource-form'){
-        const type=form.querySelector('[name="type"]').value;
-        const payload={id:fd.id||undefined,organization_id:fd.organization_id,type,name:String(fd.name).trim(),location:String(fd.location||'').trim(),description:String(fd.description||'').trim(),capacity:type==='room'?Number(fd.amount):1,stock_quantity:type==='item'?Number(fd.amount):1,requires_room:type==='item'?form.querySelector('[name="requires_room"]').checked:false,active:form.querySelector('[name="active"]').checked};
-        await state.adapter.upsertResource(payload);closeModal();toast('資源設定已儲存');await refreshData();
+        const type=form.querySelector('[name="type"]')?.value || state.resourceType;
+        const organizationId=String(fd.organization_id||'').trim();
+        const name=String(fd.name||'').trim();
+        const amount=Number(fd.amount);
+        if(!organizationId) throw new Error('請先選擇機構。');
+        if(!name) throw new Error(`請輸入${type==='room'?'房間':'物品'}名稱。`);
+        if(!Number.isInteger(amount)||amount<1) throw new Error(type==='room'?'房間名額必須至少為 1 人。':'物品數量必須至少為 1 件。');
+        const payload={id:fd.id||undefined,organization_id:organizationId,type,name,location:String(fd.location||'').trim(),description:String(fd.description||'').trim(),capacity:type==='room'?amount:1,stock_quantity:type==='item'?amount:1,requires_room:type==='item'?Boolean(form.querySelector('[name="requires_room"]')?.checked):false,active:Boolean(form.querySelector('[name="active"]')?.checked)};
+        await state.adapter.upsertResource(payload);closeModal();toast(`${type==='room'?'房間':'物品'}設定已儲存`);await refreshData();
       }
       if(form.id==='rule-form'){
         if(fd.start_time>=fd.end_time) throw new Error('結束時間必須晚於開始時間。');

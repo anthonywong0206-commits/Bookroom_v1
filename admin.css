@@ -331,3 +331,30 @@ tbody tr:hover { background:#fbfdff; }
 @media (prefers-reduced-motion: reduce) {
   *,*::before,*::after { scroll-behavior:auto!important;animation-duration:.001ms!important;transition-duration:.001ms!important; }
 }
+
+/* ===== Institution CRUD / resource manager enhancements ===== */
+.org-manager-panel { margin-bottom: 16px; }
+.org-management-grid {
+  display: grid;
+  grid-template-columns: minmax(240px,.7fr) minmax(360px,1.3fr);
+  gap: 16px;
+  align-items: end;
+}
+.org-current-card {
+  min-height: 76px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(180deg,#fbfdff,#f5f9fd);
+  padding: 13px 15px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.org-current-card span,
+.org-current-card small { display:block; color:var(--muted); font-size:11px; }
+.org-current-card strong { display:block; margin:2px 0; color:var(--text-strong); font-size:15px; }
+.org-current-card .actions { justify-content:flex-end; }
+@media (max-width: 1050px) {
+  .org-management-grid { grid-template-columns: 1fr; }
+}

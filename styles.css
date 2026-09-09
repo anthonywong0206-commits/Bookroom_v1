@@ -740,178 +740,201 @@ img { max-width: 100%; display: block; }
 
 @media (min-width: 900px) {
   body {
-    background: #f4f7fb;
-    min-width: 1024px;
+    min-width: 980px;
+    background:
+      radial-gradient(circle at 12% 0%, rgba(50, 170, 245, .13), transparent 34rem),
+      radial-gradient(circle at 92% 8%, rgba(42, 197, 170, .10), transparent 32rem),
+      #f4f8fd;
   }
 
   .desktop-public {
     min-height: 100vh;
+    display: block;
+  }
+
+  .desktop-simple-header {
+    height: 86px;
+    padding: 0 clamp(28px, 5vw, 72px);
+    background: rgba(255,255,255,.94);
+    border-bottom: 1px solid #dfe9f6;
     display: grid;
-    grid-template-columns: 250px minmax(0, 1fr);
-  }
-
-  .desktop-sidebar {
-    min-height: 100vh;
+    grid-template-columns: minmax(280px,1fr) auto minmax(220px,1fr);
+    align-items: center;
+    gap: 24px;
     position: sticky;
     top: 0;
-    height: 100vh;
-    padding: 26px 20px 20px;
-    background: #ffffff;
-    border-right: 1px solid #e2eaf5;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 10px 0 26px rgba(44, 76, 121, 0.04);
+    z-index: 40;
+    backdrop-filter: blur(14px);
+    box-shadow: 0 5px 24px rgba(56, 86, 128, .05);
   }
 
-  .desktop-brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 4px 8px 24px;
-  }
-  .desktop-brand img { width: 46px; height: 46px; }
-  .desktop-brand strong { display:block; font-size:1.05rem; color:#17345f; }
-  .desktop-brand span { display:block; font-size:0.78rem; color:#8aa0bd; margin-top:3px; }
-
-  .desktop-nav-label {
-    color: #9aaac0;
-    font-size: 0.72rem;
-    font-weight: 800;
-    letter-spacing: .08em;
-    padding: 0 10px 9px;
-  }
-
-  .desktop-nav { display: grid; gap: 7px; }
-  .desktop-nav-btn,
-  .desktop-admin-link {
-    width: 100%;
-    min-height: 48px;
-    border-radius: 14px;
+  .desktop-logo-button {
     border: 0;
+    background: transparent;
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 0 14px;
-    color: #617b9d;
+    padding: 0;
+    text-align: left;
+    color: var(--text);
+  }
+  .desktop-logo-button img { width: 48px; height: 48px; }
+  .desktop-logo-button strong { display:block; font-size:1.03rem; color:#15365f; }
+  .desktop-logo-button small { display:block; color:#8aa0bc; font-size:.72rem; margin-top:3px; }
+
+  .desktop-simple-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 5px;
+    border-radius: 18px;
+    background: #f3f7fc;
+  }
+  .desktop-simple-nav button {
+    min-width: 100px;
+    height: 48px;
+    border: 0;
+    border-radius: 14px;
     background: transparent;
-    font-weight: 700;
-    text-decoration: none;
+    color: #6e86a5;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
   }
-  .desktop-nav-btn svg,
-  .desktop-admin-link svg { width: 21px; height: 21px; flex: 0 0 auto; }
-  .desktop-nav-btn:hover,
-  .desktop-admin-link:hover { background: #f2f7fe; color: var(--primary); }
-  .desktop-nav-btn.active {
-    color: var(--primary-dark);
-    background: linear-gradient(90deg, #eaf3ff, #f5f9ff);
-    box-shadow: inset 3px 0 0 var(--primary);
-  }
-  .desktop-sidebar-spacer { flex: 1; }
-  .desktop-admin-link {
-    background: #f7faff;
-    border: 1px solid #dfe9f8;
-    color: var(--primary-dark);
-    margin-bottom: 12px;
-  }
-  .desktop-cloud-note {
-    color: #a1afc2;
-    font-size: 0.73rem;
-    padding: 0 8px;
+  .desktop-simple-nav button svg { width: 20px; height: 20px; }
+  .desktop-simple-nav button:hover { background: #fff; color: var(--primary); }
+  .desktop-simple-nav button.active {
+    background: #fff;
+    color: var(--primary);
+    box-shadow: 0 5px 16px rgba(52, 88, 137, .10);
   }
 
-  .desktop-main { min-width: 0; }
-  .desktop-topbar {
-    height: 96px;
-    background: rgba(255,255,255,.92);
-    border-bottom: 1px solid #e2eaf5;
-    display: flex;
+  .desktop-admin-entry {
+    justify-self: end;
+    min-height: 46px;
+    padding: 0 17px;
+    border-radius: 14px;
+    border: 1px solid #d8e6f7;
+    background: #fff;
+    color: var(--primary-dark);
+    text-decoration: none;
+    font-weight: 800;
+    display: inline-flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 0 36px;
-    position: sticky;
-    top: 0;
-    z-index: 30;
-    backdrop-filter: blur(12px);
+    gap: 9px;
+    box-shadow: 0 6px 18px rgba(49, 84, 131, .06);
   }
-  .desktop-topbar h1 { margin: 0; font-size: 1.45rem; color:#17345f; }
-  .desktop-topbar p { margin: 5px 0 0; color:#7c91ad; font-size: .9rem; }
-  .desktop-top-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: #7189a7;
-    font-size: 0.88rem;
+  .desktop-admin-entry svg { width: 20px; height: 20px; }
+  .desktop-admin-entry:hover { border-color:#abd0fb; background:#f5faff; }
+
+  .desktop-big-main {
+    padding: 34px clamp(28px, 5vw, 72px) 60px;
   }
-  .desktop-sync-dot {
-    width: 9px; height: 9px; border-radius: 50%; background: #29b899;
-    box-shadow: 0 0 0 5px rgba(41,184,153,.1);
+  .desktop-page-heading {
+    max-width: 1180px;
+    margin: 0 auto 22px;
+  }
+  .desktop-page-heading h1 {
+    margin: 0;
+    color: #143760;
+    font-size: clamp(1.6rem, 2.2vw, 2.15rem);
+    letter-spacing: -.02em;
+  }
+  .desktop-page-heading p {
+    margin: 7px 0 0;
+    color: #7b91ae;
+    font-size: .96rem;
   }
 
   .desktop-content {
-    padding: 30px 36px 48px;
-    max-width: 1380px;
+    max-width: 1180px;
     margin: 0 auto;
+    padding: 0;
   }
-
   .desktop-content > .app-header { display: none; }
   .desktop-content .card {
-    border-radius: 20px;
-    box-shadow: 0 8px 24px rgba(47, 76, 118, 0.07);
+    border-radius: 26px;
+    box-shadow: 0 12px 34px rgba(47, 76, 118, 0.08);
   }
+
+  /* Desktop keeps the same large-action language as mobile. */
   .desktop-content .hero-card {
     display: grid;
-    grid-template-columns: minmax(440px, 1.15fr) minmax(340px, .85fr);
-    gap: 28px;
+    grid-template-columns: minmax(460px, 1.15fr) minmax(360px, .85fr);
+    grid-template-rows: auto auto;
+    gap: 28px 34px;
     align-items: center;
-    padding: 30px;
+    padding: 34px;
   }
   .desktop-content .hero-scene {
-    min-height: 330px;
+    grid-row: 1 / span 2;
+    min-height: 360px;
     margin: 0;
+    border-radius: 28px;
   }
   .desktop-content .primary-actions {
-    gap: 16px;
+    align-self: end;
+    gap: 18px;
   }
   .desktop-content .big-button {
-    min-height: 96px;
-    border-radius: 20px;
-    font-size: 1.25rem;
+    min-height: 112px;
+    border-radius: 26px;
+    padding: 24px 28px;
+    font-size: 1.5rem;
   }
+  .desktop-content .big-button svg { width: 34px; height: 34px; }
   .desktop-content .quote-box {
-    grid-column: 2;
-    margin: -8px 0 0;
+    margin: 0;
+    min-height: 72px;
+    display: grid;
+    place-items: center;
+    font-size: 1rem;
   }
 
-  .desktop-content .choice-card {
-    min-height: 180px;
-  }
   .desktop-content .stack:has(.choice-card) {
     grid-template-columns: repeat(2, minmax(0,1fr));
+    gap: 22px;
   }
+  .desktop-content .choice-card {
+    min-height: 210px;
+    padding: 28px;
+    border-radius: 28px;
+  }
+  .desktop-content .choice-illustration {
+    width: 116px;
+    height: 116px;
+    border-radius: 28px;
+  }
+  .desktop-content .choice-content h3 { font-size: 1.7rem; }
+  .desktop-content .choice-content p { font-size: 1rem; }
 
-  .desktop-content .step-card { padding: 26px; }
+  .desktop-content .step-card { padding: 30px; }
   .desktop-content .room-grid { grid-template-columns: repeat(3, minmax(0,1fr)); }
   .desktop-content .item-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .desktop-content .calendar-card { max-width: 680px; }
+  .desktop-content .calendar-card { max-width: 720px; }
   .desktop-content .form-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .desktop-content .query-card { max-width: 760px; }
+  .desktop-content .query-card { max-width: none; }
   .desktop-content .public-loan-list {
     display: grid;
     grid-template-columns: repeat(2, minmax(0,1fr));
-    gap: 14px;
+    gap: 16px;
   }
   .desktop-content .public-loan-card {
-    grid-template-columns: auto minmax(0,1fr) minmax(220px,.9fr);
-    min-height: 104px;
+    grid-template-columns: auto minmax(0,1fr) minmax(240px,.9fr);
+    min-height: 116px;
+    padding: 18px 20px;
   }
   .desktop-content .public-resource-date {
     grid-column: auto;
     padding-top: 0;
-    padding-left: 18px;
+    padding-left: 20px;
     border-top: 0;
     border-left: 1px solid #e4edf9;
   }
-  .desktop-content .confirmation-card { max-width: 760px; margin: 40px auto 0; }
+  .desktop-content .confirmation-card { max-width: 780px; margin: 30px auto 0; }
   .navbar { display: none !important; }
 }
 

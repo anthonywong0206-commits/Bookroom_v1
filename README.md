@@ -1,117 +1,71 @@
-# 房間及物品預約系統 — Responsive Split UI
+# 房間及物品預約系統 — 管理員 CRUD + Desktop 大按鈕更新
 
-本版本按 2026-09-09 最新要求更新，將**手機用戶版**與**桌面網頁版**的介面分開，同時保留獨立管理員後台。
+此版本在上一個 responsive 版本上更新，保留手機版流程及桌面專用管理員入口。
 
-## 1. 手機版（< 900px）
+## 本次更新
 
-沿用已確認的手機概念圖：
+### 1. 管理員：機構完整管理
+管理員後台 > 資源管理現在可：
+- 新增機構
+- 修改機構名稱
+- 啟用／停用機構
+- 刪除機構
 
-- 首頁兩個大型按鈕：**預約 / 查詢**
-- 預約後選擇：**房間 / 外借物品**
-- 房間流程：房間 → 日曆日期 → 時段 → 是否需要同日中心使用物品 → 提交
-- 外借物品流程：開始日期 → 預設一星期 → 可修改歸還日期 → 選物品 → 提交
-- 底部導航列只保留：
-  - **首頁**
-  - **預約**
-  - **查詢**
-- 手機版不顯示「我的」
-- 手機版不顯示管理員登入入口
+為保障歷史資料，如機構旗下資源已經有借用紀錄，系統會拒絕硬刪除；可改為停用機構／資源。
 
-## 2. 桌面網頁版（>= 900px）
+### 2. 管理員：房間／物品功能修復
+已重新整理新增及管理流程：
+- 新增房間
+- 新增物品
+- 編輯房間／物品
+- 刪除沒有歷史借用紀錄的房間／物品
+- 啟用／停用資源
+- 房間名額
+- 物品庫存量
+- 物品是否需要配合房間
+- 可預約日期／星期／時段
 
-桌面版改回接近原有系統風格：
+新增資源前必須先建立／選擇機構；表單亦增加清晰驗證及錯誤訊息。
 
-- 左側 Sidebar
-- 上方 Topbar
-- 大型內容 Panel
-- 功能：首頁 / 提交預約 / 資源借用查詢
-- Sidebar 下方顯示 **管理員登入**
+### 3. Desktop 前台改為大按鈕模式
+電腦版不再以 Sidebar 作為主要操作方式。
 
-桌面版與手機版使用同一個 `index.html`，系統按 viewport 自動切換，不需兩個公開網址。
+桌面首頁與手機版採用相同主要流程：
+- **預約**（大按鈕）
+- **查詢**（大按鈕）
 
-## 3. 管理員後台
+點選「預約」後再選：
+- 房間
+- 外借物品
 
-管理員後台獨立於：
+桌面版頂部仍保留簡單導覽，以及只在 Desktop 顯示的「管理員登入」。
 
-```text
-/admin.html
-```
+### 4. 公開查詢資料
+維持上一版私隱設定：公開查詢只顯示：
+- 房間／物品名稱
+- 借用日期或日期範圍
 
-保留原版本完整管理功能，包括：
+不顯示申請人、電話、用途、申請編號、備註等資料。
 
-- 管理員登入 / Supabase Auth
-- 管理員總覽
-- 機構管理
-- 房間管理
-- 物品管理
-- 容量 / 庫存
-- 可用日期及時段
-- 預約申請審批
-- 批准 / 拒絕 / 完成
-- Supabase Realtime
+## Supabase 已部署舊版本時
+如果管理員仍然收到 RLS / permission denied / insert denied 等錯誤，請在 Supabase SQL Editor 執行：
 
-為符合要求，`admin.html` 在手機寬度會顯示「請使用桌面版」提示，而不顯示登入介面。
+`supabase/20260909_admin_crud_fix.sql`
 
-## 4. 公開查詢頁私隱調整
+新建 Supabase Project 則直接執行完整：
 
-公開查詢頁現在只顯示：
+`supabase/schema.sql`
 
-- **房間 / 物品名稱**
-- **借用日期**
-- 外借物品會顯示借用日期範圍
-
-不再公開顯示：
-
-- 申請編號
-- 申請人姓名
-- 電話
-- 用途
-- 備註
-- 詳細申請內容
-
-目前公開列表只顯示已批准 / 已歸還的借用紀錄，不公開待審批申請資料。
-
-## 5. 主要檔案
+## 主要更新檔案
 
 ```text
-room-resource-booking-system/
-├── index.html              # 公開網站，自動切換手機 / 桌面 UI
-├── app.js                  # 公開預約流程
-├── styles.css              # Responsive 公開 UI
-│
-├── admin.html              # 桌面管理員入口
-├── admin-app.js            # 原完整管理員系統功能
-├── admin.css               # 原管理員 / 後台介面
-│
-├── config.js               # Supabase / Demo 設定
-├── config.example.js
-├── manifest.webmanifest
-├── sw.js
-├── vercel.json
-├── assets/
-│   └── app-icon.svg
-└── supabase/
-    ├── schema.sql
-    └── optional-demo-data.sql
+app.js
+styles.css
+admin-app.js
+admin.css
+README.md
+supabase/20260909_admin_crud_fix.sql
 ```
 
-## 6. 部署
-
-可直接上傳整個資料夾到 GitHub repository，然後使用 Vercel 部署。
-
-`vercel.json`、GitHub Pages workflow、Supabase schema 均保留。
-
-### 正式 Supabase
-
-如使用正式 Supabase：
-
-```js
-window.APP_CONFIG = {
-  appName: '房間及物品預約系統',
-  demoMode: false,
-  supabaseUrl: 'YOUR_PROJECT_URL',
-  supabasePublishableKey: 'YOUR_PUBLISHABLE_KEY'
-};
-```
-
-管理員登入使用 Supabase Auth 及 `profiles.role = 'admin'` 權限。
+## 部署
+把整個資料夾覆蓋 GitHub repository 內容並 commit；Vercel 連接該 repository 時會自動重新部署。
