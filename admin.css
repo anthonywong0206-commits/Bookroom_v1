@@ -20,3 +20,9 @@
 .related-item-control .input{padding:8px 9px;text-align:center}
 .readonly-field{background:#eef3f8;color:#5d718c;cursor:default}
 @media(max-width:900px){.related-items-grid{grid-template-columns:1fr}}
+
+/* v10.6 booking opening rule */
+.policy-custom-box{margin-top:14px;padding:14px;border:1px dashed #cfd8e3;border-radius:14px;background:#fafcff}
+.policy-preview{margin-top:14px;padding:16px 18px;border-radius:14px;background:#eef7ff;border:1px solid #cfe6ff;line-height:1.7}
+.policy-preview strong{color:#155aa8}
+.policy-help{line-height:1.65}

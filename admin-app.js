@@ -7,7 +7,7 @@
   const DEMO_KEY='rrbs_admin_demo_v4';
   const SYNC_CHANNEL='rrbs-resource-sync';
   let syncChannel=null;
-  const state={tab:'organizations',organizations:[],resources:[],availability:[],bookings:[],resourceBlocks:[],purposeOptions:[],resourceType:'room',editingOrgId:null,editingResourceId:null,selectedResourceId:null,editingPurposeId:null,user:null,loading:false,error:'',calendarResourceId:null,calendarMonthOffset:0,calendarSelectedDate:null,editingCalendarBookingId:null,creatingCalendarBooking:false,telegramStatus:{configured:false,bot_token_set:false,chat_id_set:false,chat_id_masked:null},bookingPolicy:{active:false,mode:'fixed_month_day',scope:'month',fixed_day:1,days_before:7}};
+  const state={tab:'organizations',organizations:[],resources:[],availability:[],bookings:[],resourceBlocks:[],purposeOptions:[],resourceType:'room',editingOrgId:null,editingResourceId:null,selectedResourceId:null,editingPurposeId:null,user:null,loading:false,error:'',calendarResourceId:null,calendarMonthOffset:0,calendarSelectedDate:null,editingCalendarBookingId:null,creatingCalendarBooking:false,telegramStatus:{configured:false,bot_token_set:false,chat_id_set:false,chat_id_masked:null},bookingPolicy:{active:false,mode:'fixed_month_day',scope:'month',fixed_day:20,days_before:14,open_time:'12:00:00'}};
   let supabase=null;
 
   const seed={
@@ -218,31 +218,101 @@
 
   function bookingPolicyView(){
     const p=state.bookingPolicy||{};
-    return `${top('開放申請期限','設定所有房間及物品何時開放預約')}
+    const preset=policyPresetValue(p);
+    return `${top('開放申請時間','設定所有房間及物品何時開放預約')}
       <section class="panel">
-        <div class="panel-head"><div><h3>全站預約開放規則</h3><p>房間及物品共用同一規則；關閉規則時維持原有預約方式。</p></div></div>
+        <div class="panel-head"><div><h3>預約開放規則</h3><p>先揀常用設定；只有特別安排先需要使用「自訂規則」。</p></div></div>
         <form data-booking-policy-form class="form-card">
-          <label class="checkline"><input type="checkbox" name="active" ${p.active?'checked':''}> 啟用開放申請期限</label>
-          <div class="form-grid" style="margin-top:14px">
-            <div class="field full"><span>開放方式</span><select class="select" name="mode">
-              <option value="fixed_month_day" ${p.mode==='fixed_month_day'?'selected':''}>每月指定日子開放未來一段期間</option>
-              <option value="days_before_period" ${p.mode==='days_before_period'?'selected':''}>指定期數開始前 N 日開放</option>
+          <label class="checkline"><input type="checkbox" name="active" ${p.active?'checked':''}> 啟用預約開放限制</label>
+          <div class="form-grid policy-simple-grid" style="margin-top:14px">
+            <div class="field full"><span>常用設定</span><select class="select" name="preset" data-policy-preset>
+              <option value="monthly_next_month" ${preset==='monthly_next_month'?'selected':''}>每月指定日期及時間，開放下一個月</option>
+              <option value="days14_next_month" ${preset==='days14_next_month'?'selected':''}>下一個月開始前 14 日，開放下一個月</option>
+              <option value="days7_next_week" ${preset==='days7_next_week'?'selected':''}>下一星期開始前 7 日，開放下一星期</option>
+              <option value="custom" ${preset==='custom'?'selected':''}>自訂規則</option>
             </select></div>
-            <div class="field"><span>期間</span><select class="select" name="scope">
-              <option value="week" ${p.scope==='week'?'selected':''}>星期</option>
-              <option value="month" ${p.scope==='month'?'selected':''}>月</option>
-              <option value="quarter" ${p.scope==='quarter'?'selected':''}>季</option>
-            </select></div>
-            <div class="field"><span>每月指定日子（1–28）</span><input class="input" type="number" name="fixed_day" min="1" max="28" value="${Number(p.fixed_day||1)}"></div>
-            <div class="field"><span>提前日數 N（0–365）</span><input class="input" type="number" name="days_before" min="0" max="365" value="${Number(p.days_before||7)}"></div>
+            <div class="field" data-policy-fixed-day><span>每月幾號開放</span><input class="input" type="number" name="fixed_day" min="1" max="28" value="${Number(p.fixed_day||20)}"></div>
+            <div class="field"><span>開放時間</span><input class="input" type="time" name="open_time" value="${attr(shortTime(p.open_time||'12:00'))}" required></div>
           </div>
-          <div class="notice" style="margin-top:12px"><strong>規則說明：</strong><br>
-            「每月指定日子」：例如每月 1 日起，開放未來 1 星期／1 個月／1 季內日期。<br>
-            「提前 N 日」：例如選「月」及 7 日，每個月份開始前 7 日起，該月份日期才可預約。
+          <div class="policy-custom-box" data-policy-custom ${preset==='custom'?'':'style="display:none"'}>
+            <div class="form-grid">
+              <div class="field full"><span>自訂開放方式</span><select class="select" name="mode" data-policy-mode>
+                <option value="fixed_month_day" ${p.mode==='fixed_month_day'?'selected':''}>每月指定日子／時間開放</option>
+                <option value="days_before_period" ${p.mode==='days_before_period'?'selected':''}>目標期間開始前 N 日／指定時間開放</option>
+              </select></div>
+              <div class="field"><span>開放範圍</span><select class="select" name="scope" data-policy-scope>
+                <option value="week" ${p.scope==='week'?'selected':''}>下一星期</option>
+                <option value="month" ${p.scope==='month'?'selected':''}>下一個月</option>
+                <option value="quarter" ${p.scope==='quarter'?'selected':''}>下一自然季度</option>
+              </select></div>
+              <div class="field" data-policy-days-before><span>提前幾多日</span><input class="input" type="number" name="days_before" min="0" max="365" value="${Number(p.days_before||14)}"></div>
+            </div>
           </div>
-          <div class="form-actions"><button class="btn btn-primary" type="submit">儲存開放期限</button></div>
+          <div class="policy-preview" data-policy-preview>${bookingPolicyPreviewHtml(p)}</div>
+          <div class="notice policy-help"><strong>點樣理解？</strong><br>
+            例如設定「每月 20 號、12:00、開放下一個月」：到 9 月 20 日中午 12:00，系統先會開放 10 月 1–31 日嘅預約。
+          </div>
+          <div class="form-actions"><button class="btn btn-primary" type="submit">儲存設定</button></div>
         </form>
       </section>`;
+  }
+
+  function policyPresetValue(p){
+    if(p.mode==='fixed_month_day'&&p.scope==='month')return 'monthly_next_month';
+    if(p.mode==='days_before_period'&&p.scope==='month'&&Number(p.days_before)===14)return 'days14_next_month';
+    if(p.mode==='days_before_period'&&p.scope==='week'&&Number(p.days_before)===7)return 'days7_next_week';
+    return 'custom';
+  }
+
+  function policyPayloadFromForm(form){
+    const fd=new FormData(form);
+    const preset=String(fd.get('preset')||'custom');
+    let mode=String(fd.get('mode')||'fixed_month_day');
+    let scope=String(fd.get('scope')||'month');
+    let fixedDay=Math.min(28,Math.max(1,Number(fd.get('fixed_day')||20)));
+    let daysBefore=Math.min(365,Math.max(0,Number(fd.get('days_before')||14)));
+    if(preset==='monthly_next_month'){mode='fixed_month_day';scope='month';}
+    if(preset==='days14_next_month'){mode='days_before_period';scope='month';daysBefore=14;}
+    if(preset==='days7_next_week'){mode='days_before_period';scope='week';daysBefore=7;}
+    return {active:fd.get('active')==='on',mode,scope,fixed_day:fixedDay,days_before:daysBefore,open_time:String(fd.get('open_time')||'12:00'),updated_at:new Date().toISOString()};
+  }
+
+  function bookingPolicyPreviewHtml(p){
+    const info=calculatePolicyPreview(p);
+    if(!p.active)return '<strong>目前狀態：</strong>未啟用限制，用戶可按房間／物品可用情況隨時提交申請。';
+    if(!info)return '<strong>設定預覽：</strong>請完成上方設定。';
+    return `<strong>下一次開放：</strong>${esc(info.openLabel)}<br><strong>屆時開放：</strong>${esc(info.rangeLabel)}`;
+  }
+
+  function calculatePolicyPreview(p){
+    try{
+      const now=new Date();
+      const hhmm=shortTime(p.open_time||'12:00');
+      const [hh,mm]=hhmm.split(':').map(Number);
+      let open,start,end;
+      if(p.mode==='fixed_month_day'){
+        open=new Date(now.getFullYear(),now.getMonth(),Math.min(28,Math.max(1,Number(p.fixed_day||20))),hh,mm,0,0);
+        if(now>=open)open=new Date(now.getFullYear(),now.getMonth()+1,Math.min(28,Math.max(1,Number(p.fixed_day||20))),hh,mm,0,0);
+        if(p.scope==='month'){start=new Date(open.getFullYear(),open.getMonth()+1,1);end=new Date(open.getFullYear(),open.getMonth()+2,0);}
+        else if(p.scope==='quarter'){start=new Date(open.getFullYear(),open.getMonth()+1,1);end=new Date(open.getFullYear(),open.getMonth()+4,0);}
+        else {start=new Date(open);start.setDate(start.getDate()+1);end=new Date(start);end.setDate(end.getDate()+6);}
+      }else{
+        const n=Math.max(0,Number(p.days_before||0));
+        if(p.scope==='week'){
+          const day=(now.getDay()+6)%7; start=new Date(now.getFullYear(),now.getMonth(),now.getDate()-day+7);
+          open=new Date(start);open.setDate(open.getDate()-n);open.setHours(hh,mm,0,0);
+          if(now>=open){start.setDate(start.getDate()+7);open=new Date(start);open.setDate(open.getDate()-n);open.setHours(hh,mm,0,0);} end=new Date(start);end.setDate(end.getDate()+6);
+        }else if(p.scope==='quarter'){
+          const q=Math.floor(now.getMonth()/3);start=new Date(now.getFullYear(),(q+1)*3,1);open=new Date(start);open.setDate(open.getDate()-n);open.setHours(hh,mm,0,0);
+          if(now>=open){start=new Date(start.getFullYear(),start.getMonth()+3,1);open=new Date(start);open.setDate(open.getDate()-n);open.setHours(hh,mm,0,0);} end=new Date(start.getFullYear(),start.getMonth()+3,0);
+        }else{
+          start=new Date(now.getFullYear(),now.getMonth()+1,1);open=new Date(start);open.setDate(open.getDate()-n);open.setHours(hh,mm,0,0);
+          if(now>=open){start=new Date(now.getFullYear(),now.getMonth()+2,1);open=new Date(start);open.setDate(open.getDate()-n);open.setHours(hh,mm,0,0);} end=new Date(start.getFullYear(),start.getMonth()+1,0);
+        }
+      }
+      const fmt=d=>`${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
+      return {openLabel:`${fmt(open)} ${String(open.getHours()).padStart(2,'0')}:${String(open.getMinutes()).padStart(2,'0')}`,rangeLabel:`${fmt(start)} 至 ${fmt(end)}`};
+    }catch(_){return null;}
   }
 
   function purposeOptionsView(){
@@ -475,22 +545,33 @@
     qsa('[data-block-date]').forEach(b=>b.onclick=()=>blockCalendarDate(b.dataset.blockDate));
     qsa('[data-unblock-date]').forEach(b=>b.onclick=()=>unblockCalendarDate(b.dataset.unblockDate));
     on('[data-booking-policy-form]','submit',saveBookingPolicy);
+    bindBookingPolicyControls();
     on('[data-telegram-form]','submit',saveTelegramSettings);
     on('[data-telegram-test]','click',testTelegramNotification);
     on('[data-signout]','click',async()=>{if(supabase)await supabase.auth.signOut();location.reload();});
   }
 
+  function bindBookingPolicyControls(){
+    const form=qs('[data-booking-policy-form]'); if(!form)return;
+    const refresh=()=>{
+      const preset=String(form.querySelector('[name="preset"]')?.value||'custom');
+      const modeEl=form.querySelector('[name="mode"]'),scopeEl=form.querySelector('[name="scope"]'),daysEl=form.querySelector('[name="days_before"]');
+      if(preset==='monthly_next_month'){if(modeEl)modeEl.value='fixed_month_day';if(scopeEl)scopeEl.value='month';}
+      if(preset==='days14_next_month'){if(modeEl)modeEl.value='days_before_period';if(scopeEl)scopeEl.value='month';if(daysEl)daysEl.value='14';}
+      if(preset==='days7_next_week'){if(modeEl)modeEl.value='days_before_period';if(scopeEl)scopeEl.value='week';if(daysEl)daysEl.value='7';}
+      const custom=form.querySelector('[data-policy-custom]'); if(custom)custom.style.display=preset==='custom'?'':'none';
+      const fixed=form.querySelector('[data-policy-fixed-day]'); if(fixed)fixed.style.display=(preset==='monthly_next_month'||(preset==='custom'&&String(modeEl?.value)==='fixed_month_day'))?'':'none';
+      const days=form.querySelector('[data-policy-days-before]'); if(days)days.style.display=(preset==='custom'&&String(modeEl?.value)==='days_before_period')?'':'none';
+      const preview=form.querySelector('[data-policy-preview]'); if(preview)preview.innerHTML=bookingPolicyPreviewHtml(policyPayloadFromForm(form));
+    };
+    form.querySelectorAll('input,select').forEach(el=>el.addEventListener('input',refresh));
+    form.querySelectorAll('select').forEach(el=>el.addEventListener('change',refresh));
+    refresh();
+  }
+
   async function saveBookingPolicy(e){
     e.preventDefault();
-    const fd=new FormData(e.currentTarget);
-    const payload={
-      active:fd.get('active')==='on',
-      mode:String(fd.get('mode')||'fixed_month_day'),
-      scope:String(fd.get('scope')||'month'),
-      fixed_day:Math.min(28,Math.max(1,Number(fd.get('fixed_day')||1))),
-      days_before:Math.min(365,Math.max(0,Number(fd.get('days_before')||0))),
-      updated_at:new Date().toISOString()
-    };
+    const payload=policyPayloadFromForm(e.currentTarget);
     try{
       if(DEMO){state.bookingPolicy={singleton:true,...payload};toast('開放申請期限已儲存（Demo）','success');render();return;}
       const r=await supabase.from('booking_policy').update(payload).eq('singleton',true).select().single();

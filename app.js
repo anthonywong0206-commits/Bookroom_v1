@@ -47,7 +47,7 @@
     querySelectedDate: '',
     itemCategoryFilter: 'all',
     queryItemCategoryFilter: 'all',
-    bookingPolicy: {active:false,mode:'fixed_month_day',scope:'month',fixed_day:1,days_before:7},
+    bookingPolicy: {active:false,mode:'fixed_month_day',scope:'month',fixed_day:20,days_before:14,open_time:'12:00:00'},
     roomFlow: defaultRoomFlow(),
     loanFlow: defaultLoanFlow(),
     confirmation: null,
@@ -435,6 +435,7 @@
         <div class="portal-gate-card card">
           <div class="brand portal-gate-brand"><div class="brand-logo">${icons.calendar}</div><div><div class="brand-title">房間及物品預約系統</div><div class="brand-subtitle">請先登入所屬機構</div></div></div>
           <div class="portal-gate-copy">為確保不同機構的房間、物品及借用資料互相分隔，請選擇所屬機構並輸入密碼。</div>
+          ${renderBookingOpenNotice()}
           ${state.sourceError ? `<div class="portal-gate-error">${escapeHtml(state.sourceError)}</div>` : ''}
           <form class="portal-login-form" data-portal-login>
             <label class="field-label">所屬機構 *</label>
@@ -512,6 +513,7 @@
   function renderHome() {
     return `
       ${renderHeader('房間及物品<br>預約系統', '簡單預約・善用資源・服務社區', null)}
+      ${renderBookingOpenNotice()}
       <section class="card hero-card">
         <div class="hero-scene">
           <div class="hero-tree"></div>
@@ -964,30 +966,70 @@
     return `<div class="category-filter-row">${buttons.join('')}</div>`;
   }
 
+  function parsePolicyNow(){
+    if(state.bookingPolicy?.now_hk){
+      const raw=String(state.bookingPolicy.now_hk).replace(' ','T');
+      const d=new Date(raw.includes('+')||raw.endsWith('Z')?raw:raw+'+08:00');
+      if(!Number.isNaN(d.getTime()))return d;
+    }
+    return new Date();
+  }
+
+  function policyTimeParts(){
+    const parts=String(state.bookingPolicy?.open_time||'12:00').slice(0,5).split(':').map(Number);
+    return [Number.isFinite(parts[0])?parts[0]:12,Number.isFinite(parts[1])?parts[1]:0];
+  }
+
+  function renderBookingOpenNotice(){
+    const p=state.bookingPolicy||{};
+    if(!p.active)return '';
+    let openText=p.next_open_label||'';
+    let rangeText=p.next_period_label||'';
+    if(!rangeText&&p.next_period_start&&p.next_period_end){
+      const fd=x=>{const d=new Date(String(x)+'T00:00:00+08:00');return Number.isNaN(d.getTime())?String(x):d.toLocaleDateString('zh-HK',{timeZone:'Asia/Hong_Kong',year:'numeric',month:'long',day:'numeric'});};
+      rangeText=`${fd(p.next_period_start)} 至 ${fd(p.next_period_end)}`;
+    }
+    if(!openText&&p.next_open_at){
+      const d=new Date(String(p.next_open_at));
+      if(!Number.isNaN(d.getTime()))openText=d.toLocaleString('zh-HK',{timeZone:'Asia/Hong_Kong',year:'numeric',month:'long',day:'numeric',weekday:'short',hour:'2-digit',minute:'2-digit',hour12:false});
+    }
+    return `<div class="booking-open-notice" role="status"><div class="booking-open-icon">${icons.bell}</div><div><strong>下一次開放申請</strong><div class="booking-open-time">${escapeHtml(openText||'請留意最新開放時間')}</div>${rangeText?`<div class="booking-open-range">屆時開放：${escapeHtml(rangeText)}</div>`:''}<small>未到開放時間嘅日期會顯示為不可選。</small></div></div>`;
+  }
+
   function bookingDateOpen(dateIso){
     if(!dateIso)return false;
     const p=state.bookingPolicy||{};
     if(!p.active)return dateIso>=todayIso();
-    const target=new Date(dateIso+'T12:00:00');
-    const today=new Date(todayIso()+'T12:00:00');
-    if(target<today)return false;
+    const target=new Date(dateIso+'T12:00:00+08:00');
+    const now=parsePolicyNow();
+    const hkNow=new Date(now.toLocaleString('en-US',{timeZone:'Asia/Hong_Kong'}));
+    const today=new Date(hkNow.getFullYear(),hkNow.getMonth(),hkNow.getDate(),12);
+    if(target < new Date(today.getFullYear(),today.getMonth(),today.getDate(),0))return false;
+    const [hh,mm]=policyTimeParts();
     if(p.mode==='fixed_month_day'){
-      let open=new Date(today.getFullYear(),today.getMonth(),Math.min(28,Math.max(1,Number(p.fixed_day||1))),12);
-      if(today<open)open=new Date(today.getFullYear(),today.getMonth()-1,Math.min(28,Math.max(1,Number(p.fixed_day||1))),12);
-      let limit=new Date(open);
-      if(p.scope==='week')limit.setDate(limit.getDate()+7);
-      else if(p.scope==='quarter')limit.setMonth(limit.getMonth()+3);
-      else limit.setMonth(limit.getMonth()+1);
-      return target<=limit;
+      let trigger=new Date(hkNow.getFullYear(),hkNow.getMonth(),Math.min(28,Math.max(1,Number(p.fixed_day||20))),hh,mm,0,0);
+      if(hkNow<trigger)trigger=new Date(hkNow.getFullYear(),hkNow.getMonth()-1,Math.min(28,Math.max(1,Number(p.fixed_day||20))),hh,mm,0,0);
+      if(p.scope==='month'){
+        const start=new Date(trigger.getFullYear(),trigger.getMonth()+1,1);
+        const end=new Date(trigger.getFullYear(),trigger.getMonth()+2,0,23,59,59);
+        return target>=start&&target<=end;
+      }
+      if(p.scope==='quarter'){
+        const start=new Date(trigger.getFullYear(),trigger.getMonth()+1,1);
+        const end=new Date(trigger.getFullYear(),trigger.getMonth()+4,0,23,59,59);
+        return target>=start&&target<=end;
+      }
+      const start=new Date(trigger);start.setDate(start.getDate()+1);start.setHours(0,0,0,0);
+      const end=new Date(start);end.setDate(end.getDate()+6);end.setHours(23,59,59,999);
+      return target>=start&&target<=end;
     }
-    let start;
+    let periodStart;
     if(p.scope==='week'){
-      const day=(target.getDay()+6)%7; start=new Date(target); start.setDate(target.getDate()-day);
-    }else if(p.scope==='quarter'){
-      start=new Date(target.getFullYear(),Math.floor(target.getMonth()/3)*3,1,12);
-    }else start=new Date(target.getFullYear(),target.getMonth(),1,12);
-    const open=new Date(start); open.setDate(open.getDate()-Math.max(0,Number(p.days_before||0)));
-    return today>=open;
+      const day=(target.getDay()+6)%7;periodStart=new Date(target);periodStart.setDate(target.getDate()-day);periodStart.setHours(0,0,0,0);
+    }else if(p.scope==='quarter')periodStart=new Date(target.getFullYear(),Math.floor(target.getMonth()/3)*3,1);
+    else periodStart=new Date(target.getFullYear(),target.getMonth(),1);
+    const open=new Date(periodStart);open.setDate(open.getDate()-Math.max(0,Number(p.days_before||0)));open.setHours(hh,mm,0,0);
+    return hkNow>=open;
   }
 
   function renderItemCard(item, qty, prefix) {
