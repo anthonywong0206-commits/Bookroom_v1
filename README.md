@@ -1,27 +1,19 @@
-# 房間及物品預約系統 — v10 LIVE Supabase
+# 房間及物品預約系統 v10.5
 
-這是目前正式 Supabase 跨平台版本。
+Supabase LIVE 版本。
 
-## Supabase
+本版新增：
+- 全站房間／物品開放申請期限設定
+- 兩種期限規則：每月指定日子、期數開始前 N 日
+- Supabase 後端強制驗證預約日期
+- 物品自訂分類
+- 外借、房間附加物品、借用查詢均可按分類篩選
+- 保留 v10.4 Telegram 新申請通知
 
-- Project：`room-resource-booking-system`
-- Project ref：`xdilyyjmuaovafcewins`
-- Region：Singapore
-- Mode：LIVE (`demoMode: false`)
+## 更新現有網站
+使用 `room-resource-booking-system-v10.5-PATCH.zip` 覆蓋網站檔案。
 
-前台、後台、房間／物品、時段、借用日曆、封鎖日期、用途設定及圖片均使用同一 Supabase project，因此不同電腦／手機會讀取同一份資料。
+LIVE Supabase project 已套用 v10.5 database migration，不須再次執行 SQL。
 
-## 安全
-
-- Browser 只包含 Publishable Key。
-- 不包含 service-role key。
-- 所有 public tables 均啟用 RLS。
-- 前台需要先選擇機構及輸入機構密碼。
-- 前台資料由 organization-scoped RPC 讀取／提交，避免機構資料混雜。
-- 管理員 CRUD RPC 只開放給 authenticated 帳戶，且函數內再次檢查 `profiles.role = admin`。
-- 管理員首次啟用使用一次性啟用碼，啟用碼不會放入網站檔案。
-
-詳細內容請看 `UPDATE_V10.md`。
-
-## v10.4 Telegram 通知
-新申請可透過 Supabase Edge Function 即時推送 Telegram。詳見 `TELEGRAM_INSTALL.md`。
+如日後重建 Supabase，可執行：
+`supabase/20260910_v10_5_booking_window_item_categories.sql`

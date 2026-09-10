@@ -45,6 +45,9 @@
     queryResourceId: '',
     queryMonthOffset: 0,
     querySelectedDate: '',
+    itemCategoryFilter: 'all',
+    queryItemCategoryFilter: 'all',
+    bookingPolicy: {active:false,mode:'fixed_month_day',scope:'month',fixed_day:1,days_before:7},
     roomFlow: defaultRoomFlow(),
     loanFlow: defaultLoanFlow(),
     confirmation: null,
@@ -280,6 +283,8 @@
     const orgs = await client.rpc('get_portal_organizations');
     if (orgs.error) throw orgs.error;
     state.organizations = orgs.data || [];
+    const policyRes = await client.rpc('get_booking_policy');
+    if (!policyRes.error && policyRes.data) state.bookingPolicy = policyRes.data;
     if (!state.portalAuthenticated) {
       state._allResources = []; state.availability = []; state.resourceBlocks = []; state.publicBookings = []; state.busyPeriods = []; state.purposeOptions = [];
       return;
@@ -398,6 +403,8 @@
 
   function readableError(error) {
     const message = error?.message || error?.details || String(error || '資料同步失敗');
+    if (/BOOKING_WINDOW_CLOSED/i.test(message)) return '所選日期尚未開放預約';
+    if (/get_booking_policy/i.test(message) && /does not exist|schema cache|could not find/i.test(message)) return 'Supabase 尚未套用 v10.5 開放申請期限／物品分類 SQL';
     if (/get_portal_organizations|get_organization_portal_data|verify_organization_portal|submit_organization_/i.test(message) && /does not exist|schema cache|could not find/i.test(message)) return 'Supabase 尚未套用 v9 機構登入及資料隔離 SQL';
     if (/INVALID_ORGANIZATION_PASSWORD/i.test(message)) return '機構密碼不正確';
     if (/ORGANIZATION_NOT_AVAILABLE/i.test(message)) return '此機構目前未開放使用';
@@ -622,8 +629,9 @@
             <span>所有可配合房間使用的物品都會在此顯示；如物品同時容許單獨外借，亦可在「外借物品」另外預約。</span>
           </div>
         </div>
+        ${renderCategoryFilter(itemCategories(centerUseItems),state.itemCategoryFilter,'room')}
         <div class="item-grid">
-          ${centerUseItems.length ? centerUseItems.map(item => renderItemCard(item, state.roomFlow.items[item.id] || 0, 'room-item')).join('') : '<div class="helper">目前沒有可配合房間使用的物品</div>'}
+          ${filterItemsByCategory(centerUseItems,state.itemCategoryFilter).length ? filterItemsByCategory(centerUseItems,state.itemCategoryFilter).map(item => renderItemCard(item, state.roomFlow.items[item.id] || 0, 'room-item')).join('') : '<div class="helper">此分類暫時沒有可配合房間使用的物品</div>'}
         </div>
         <div class="helper" style="margin:12px 0 18px;">已選 ${selectedItems} 件物品</div>
         <div class="inline-actions">
@@ -665,15 +673,18 @@
   function renderLoanBooking() {
     const selectedCount = sumQuantities(state.loanFlow.items);
     const hasItems = selectedCount > 0;
+    const categories = itemCategories(loanItems);
+    const visibleItems = filterItemsByCategory(loanItems, state.itemCategoryFilter);
     return `
-      ${renderHeader('預約外借物品', '先選擇物品，再選擇可預約日期', 'reserveType')}
+      ${renderHeader('預約外借物品', '先按分類選擇物品，再選擇可預約日期', 'reserveType')}
       <section class="card step-card">
         ${renderStep(3, hasItems ? 2 : 1, ['選擇物品', '選擇日期', '確認資料'])}
 
         <div class="field-block">
           <div class="field-title"><span class="order">1</span>選擇外借物品及數量</div>
+          ${renderCategoryFilter(categories,state.itemCategoryFilter,'loan')}
           <div class="item-grid two-col">
-            ${loanItems.length ? loanItems.map(item => renderItemCard(item, state.loanFlow.items[item.id] || 0, 'loan-item')).join('') : '<div class="helper">目前沒有可單獨外借的物品</div>'}
+            ${visibleItems.length ? visibleItems.map(item => renderItemCard(item, state.loanFlow.items[item.id] || 0, 'loan-item')).join('') : '<div class="helper">此分類暫時沒有可單獨外借物品</div>'}
           </div>
           <div class="helper" style="margin-top:10px;">已選 ${selectedCount} 件外借物品</div>
         </div>
@@ -735,7 +746,7 @@
         <div class="section-title query-section-heading"><h2>1. 選擇查詢項目</h2><small>${resources.length} 項資源</small></div>
         ${resources.length ? `
           ${roomResources.length ? `<div class="query-resource-section"><div class="query-resource-label">房間</div><div class="query-resource-grid">${roomResources.map(renderQueryResourceCard).join('')}</div></div>` : ''}
-          ${itemResources.length ? `<div class="query-resource-section"><div class="query-resource-label">物品</div><div class="query-resource-grid">${itemResources.map(renderQueryResourceCard).join('')}</div></div>` : ''}
+          ${itemResources.length ? `<div class="query-resource-section"><div class="query-resource-label">物品</div>${renderCategoryFilter(itemCategories(itemResources),state.queryItemCategoryFilter,'query')}<div class="query-resource-grid">${filterItemsByCategory(itemResources,state.queryItemCategoryFilter).map(renderQueryResourceCard).join('')}</div></div>` : ''}
         ` : '<div class="empty-state">目前沒有可供查詢的房間或物品</div>'}
       </section>
       ${selected ? `
@@ -771,7 +782,7 @@
     const visual = resource.image_url
       ? `<div class="query-resource-thumb"><img src="${escapeAttr(resource.image_url)}" alt="${escapeAttr(resource.name)}"></div>`
       : `<div class="query-resource-thumb placeholder">${resource.type === 'room' ? icons.door : icons[resource.icon || 'kit']}</div>`;
-    return `<button class="query-resource-card ${selected ? 'selected' : ''}" data-query-resource="${escapeAttr(resource.id)}">${visual}<div class="query-resource-copy"><strong>${escapeHtml(resource.name)}</strong><span>${escapeHtml(resource.organizationName || '')}</span></div>${selected ? '<span class="query-selected-check">✓</span>' : ''}</button>`;
+    return `<button class="query-resource-card ${selected ? 'selected' : ''}" data-query-resource="${escapeAttr(resource.id)}">${visual}<div class="query-resource-copy"><strong>${escapeHtml(resource.name)}</strong><span>${resource.type==='item'&&resource.category?escapeHtml(resource.category)+' · ':''}${escapeHtml(resource.organizationName || '')}</span></div>${selected ? '<span class="query-selected-check">✓</span>' : ''}</button>`;
   }
 
   function renderPublicStatusCalendar(resource) {
@@ -935,6 +946,50 @@
     return `<button class="${cls}" ${disabled ? 'disabled' : `data-select-date="${kind}:${iso}"`}>${date.getDate()}</button>`;
   }
 
+  function itemCategories(items){
+    return [...new Set((items||[]).map(x=>String(x.category||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'zh-Hant'));
+  }
+
+  function filterItemsByCategory(items,category){
+    if(!category||category==='all')return items||[];
+    if(category==='uncategorized')return (items||[]).filter(x=>!String(x.category||'').trim());
+    return (items||[]).filter(x=>String(x.category||'').trim()===category);
+  }
+
+  function renderCategoryFilter(categories,selected,kind){
+    const hasUncategorized=(kind==='query'?queryResources():kind==='room'?centerUseItems:loanItems).some(x=>x.type==='item'&&!String(x.category||'').trim());
+    const buttons=[`<button type="button" class="category-filter ${selected==='all'?'active':''}" data-category-filter="${kind}:all">全部</button>`]
+      .concat(categories.map(c=>`<button type="button" class="category-filter ${selected===c?'active':''}" data-category-filter="${kind}:${escapeAttr(c)}">${escapeHtml(c)}</button>`));
+    if(hasUncategorized)buttons.push(`<button type="button" class="category-filter ${selected==='uncategorized'?'active':''}" data-category-filter="${kind}:uncategorized">未分類</button>`);
+    return `<div class="category-filter-row">${buttons.join('')}</div>`;
+  }
+
+  function bookingDateOpen(dateIso){
+    if(!dateIso)return false;
+    const p=state.bookingPolicy||{};
+    if(!p.active)return dateIso>=todayIso();
+    const target=new Date(dateIso+'T12:00:00');
+    const today=new Date(todayIso()+'T12:00:00');
+    if(target<today)return false;
+    if(p.mode==='fixed_month_day'){
+      let open=new Date(today.getFullYear(),today.getMonth(),Math.min(28,Math.max(1,Number(p.fixed_day||1))),12);
+      if(today<open)open=new Date(today.getFullYear(),today.getMonth()-1,Math.min(28,Math.max(1,Number(p.fixed_day||1))),12);
+      let limit=new Date(open);
+      if(p.scope==='week')limit.setDate(limit.getDate()+7);
+      else if(p.scope==='quarter')limit.setMonth(limit.getMonth()+3);
+      else limit.setMonth(limit.getMonth()+1);
+      return target<=limit;
+    }
+    let start;
+    if(p.scope==='week'){
+      const day=(target.getDay()+6)%7; start=new Date(target); start.setDate(target.getDate()-day);
+    }else if(p.scope==='quarter'){
+      start=new Date(target.getFullYear(),Math.floor(target.getMonth()/3)*3,1,12);
+    }else start=new Date(target.getFullYear(),target.getMonth(),1,12);
+    const open=new Date(start); open.setDate(open.getDate()-Math.max(0,Number(p.days_before||0)));
+    return today>=open;
+  }
+
   function renderItemCard(item, qty, prefix) {
     const selected = qty > 0;
     const modeText = item.requires_room ? '只可配合房間預約' : '可房間附加／可單獨外借';
@@ -944,7 +999,7 @@
         <div class="item-check"></div>
         <div style="display:flex; align-items:center; gap:12px; min-width:0;">
           ${visual}
-          <div class="item-content"><h3>${escapeHtml(item.name)}</h3><p>${escapeHtml(item.description || '')}</p><span class="item-mode-note">${modeText}</span></div>
+          <div class="item-content"><h3>${escapeHtml(item.name)}</h3><p>${escapeHtml(item.description || '')}</p>${item.category?`<span class="item-category-badge">${escapeHtml(item.category)}</span>`:''}<span class="item-mode-note">${modeText}</span></div>
         </div>
         <div class="quantity"><button class="qty-btn" data-item-qty="${prefix}:${item.id}:-1">－</button><div class="qty-value">${qty}</div><button class="qty-btn" data-item-qty="${prefix}:${item.id}:1">＋</button></div>
       </div>
@@ -995,6 +1050,14 @@
       });
     });
 
+    document.querySelectorAll('[data-category-filter]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const [kind, value] = btn.dataset.categoryFilter.split(':');
+        if(kind==='query') state.queryItemCategoryFilter=value;
+        else state.itemCategoryFilter=value;
+        render();
+      });
+    });
     document.querySelectorAll('.nav-item').forEach(btn => {
       btn.addEventListener('click', () => {
         const tab = btn.dataset.tab;
@@ -1307,6 +1370,7 @@
     if (f.returnDate < f.startDate) return toast('歸還日期不可早於借用開始日期', 'error');
     const items = itemRequestPayload(loanItems, f.items);
     if (!items.length) return toast('請至少選擇一項外借物品', 'error');
+    if(!bookingDateOpen(f.startDate)||!bookingDateOpen(f.returnDate)) return toast('所選借用日期尚未開放預約','error');
     if (!f.purpose.trim() || !f.applicantName.trim() || !f.phone.trim()) {
       return toast('請填寫用途、申請人姓名及聯絡電話', 'error');
     }
@@ -1473,7 +1537,7 @@
   }
 
   function isRoomDateAvailable(roomId, dateIso) {
-    return !isResourceBlocked(roomId,dateIso) && getRoomStartTimes(roomId,dateIso,30).length > 0;
+    return bookingDateOpen(dateIso) && !isResourceBlocked(roomId,dateIso) && getRoomStartTimes(roomId,dateIso,30).length > 0;
   }
 
   function availabilityMatchesDate(rule, dateIso, weekday) {
@@ -1485,6 +1549,7 @@
   }
 
   function isLoanStartDateAvailable(dateIso) {
+    if(!bookingDateOpen(dateIso)) return false;
     const selected = itemRequestPayload(loanItems, state.loanFlow.items);
     if (!selected.length || dateIso < todayIso()) return false;
     const returnDate = addDays(dateIso, 3);

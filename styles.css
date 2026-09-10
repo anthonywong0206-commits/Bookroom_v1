@@ -871,3 +871,10 @@ img { max-width: 100%; display: block; }
   .portal-org-chip { max-width: 120px; font-size: .76rem; }
   .header-actions-wrap .desktop-admin-link { display: none; }
 }
+
+/* v10.5 item category filters */
+.category-filter-row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 14px}
+.category-filter{border:1px solid #d7dce5;background:#fff;border-radius:999px;padding:8px 13px;font-size:14px;cursor:pointer;color:#334155}
+.category-filter:hover{border-color:#94a3b8}
+.category-filter.active{background:#111827;color:#fff;border-color:#111827}
+.item-category-badge{display:inline-flex;align-items:center;width:max-content;margin:5px 0 3px;padding:3px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px;font-weight:700}

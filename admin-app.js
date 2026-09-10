@@ -7,7 +7,7 @@
   const DEMO_KEY='rrbs_admin_demo_v4';
   const SYNC_CHANNEL='rrbs-resource-sync';
   let syncChannel=null;
-  const state={tab:'organizations',organizations:[],resources:[],availability:[],bookings:[],resourceBlocks:[],purposeOptions:[],resourceType:'room',editingOrgId:null,editingResourceId:null,selectedResourceId:null,editingPurposeId:null,user:null,loading:false,error:'',calendarResourceId:null,calendarMonthOffset:0,calendarSelectedDate:null,editingCalendarBookingId:null,creatingCalendarBooking:false,telegramSettings:{enabled:false,bot_token_configured:false,chat_id:'',updated_at:null}};
+  const state={tab:'organizations',organizations:[],resources:[],availability:[],bookings:[],resourceBlocks:[],purposeOptions:[],resourceType:'room',editingOrgId:null,editingResourceId:null,selectedResourceId:null,editingPurposeId:null,user:null,loading:false,error:'',calendarResourceId:null,calendarMonthOffset:0,calendarSelectedDate:null,editingCalendarBookingId:null,creatingCalendarBooking:false,telegramStatus:{configured:false,bot_token_set:false,chat_id_set:false,chat_id_masked:null},bookingPolicy:{active:false,mode:'fixed_month_day',scope:'month',fixed_day:1,days_before:7}};
   let supabase=null;
 
   const seed={
@@ -85,10 +85,10 @@
       state.availability=clone(data.availability||[]);
       state.bookings=clone(data.bookings||[]);
       state.resourceBlocks=clone(data.resourceBlocks||data.resource_blocks||[]);
-      state.purposeOptions=clone(data.purposeOptions||data.purpose_options||seed.purposeOptions);
+      state.purposeOptions=clone(data.purposeOptions||data.purpose_options||seed.purposeOptions); state.telegramStatus={configured:false,bot_token_set:false,chat_id_set:false,chat_id_masked:null};
       if(!saved) persistDemo();
     }catch(_){
-      state.organizations=clone(seed.organizations); state.resources=clone(seed.resources); state.availability=clone(seed.availability); state.bookings=[]; state.resourceBlocks=[]; state.purposeOptions=clone(seed.purposeOptions); persistDemo();
+      state.organizations=clone(seed.organizations); state.resources=clone(seed.resources); state.availability=clone(seed.availability); state.bookings=[]; state.resourceBlocks=[]; state.purposeOptions=clone(seed.purposeOptions); state.telegramStatus={configured:false,bot_token_set:false,chat_id_set:false,chat_id_masked:null}; persistDemo();
     }
   }
   function persistDemo(){ localStorage.setItem(DEMO_KEY,JSON.stringify({organizations:state.organizations,resources:state.resources,availability:state.availability,bookings:state.bookings,resourceBlocks:state.resourceBlocks,purposeOptions:state.purposeOptions})); if(syncChannel)syncChannel.postMessage({type:'changed',at:Date.now()}); }
@@ -101,16 +101,19 @@
     return data&&data.role==='admin';
   }
   async function refreshAll(){
-    const [orgs,res,av,bks,blocks,purposes]=await Promise.all([
+    const [orgs,res,av,bks,blocks,purposes,policy]=await Promise.all([
       supabase.from('organizations').select('id,name,active,created_at,updated_at').order('name'),
       supabase.from('resources').select('*').order('type').order('name'),
       supabase.from('resource_availability').select('*').order('resource_id'),
       supabase.from('bookings').select('*').order('created_at',{ascending:false}).limit(1000),
       supabase.from('resource_blocks').select('*').order('block_date'),
-      supabase.from('purpose_options').select('*').order('sort_order').order('label')
+      supabase.from('purpose_options').select('*').order('sort_order').order('label'),
+      supabase.from('booking_policy').select('*').eq('singleton',true).maybeSingle()
     ]);
-    for(const r of [orgs,res,av,bks,blocks,purposes]) if(r.error) throw r.error;
-    state.organizations=orgs.data||[]; state.resources=res.data||[]; state.availability=av.data||[]; state.bookings=bks.data||[]; state.resourceBlocks=blocks.data||[]; state.purposeOptions=purposes.data||[];
+    for(const r of [orgs,res,av,bks,blocks,purposes,policy]) if(r.error) throw r.error;
+    state.organizations=orgs.data||[]; state.resources=res.data||[]; state.availability=av.data||[]; state.bookings=bks.data||[]; state.resourceBlocks=blocks.data||[]; state.purposeOptions=purposes.data||[]; if(policy.data)state.bookingPolicy=policy.data;
+    const tg=await supabase.rpc('admin_get_telegram_notification_status');
+    if(!tg.error&&tg.data)state.telegramStatus=tg.data;
   }
 
   function render(){
@@ -119,7 +122,7 @@
         <div class="admin-brand"><div class="admin-brand-mark">R</div><div><h1>資源預約管理</h1><p>房間及物品預約系統</p></div></div>
         <div class="mode-note">${DEMO?'Demo Mode：修改會儲存在此瀏覽器':'Supabase 正式模式'}</div>
         <nav class="side-nav">
-          ${navBtn('organizations','機構管理')}${navBtn('resources','房間／物品')}${navBtn('borrowing','借用狀況')}${navBtn('purposes','用途設定')}${navBtn('bookings','申請審批')}${navBtn('telegram','Telegram 通知')}${navBtn('dashboard','概覽')}
+          ${navBtn('organizations','機構管理')}${navBtn('resources','房間／物品')}${navBtn('booking-policy','開放申請期限')}${navBtn('borrowing','借用狀況')}${navBtn('purposes','用途設定')}${navBtn('bookings','申請審批')}${navBtn('telegram','Telegram 通知')}${navBtn('dashboard','概覽')}
         </nav>
         <div class="sidebar-bottom"><a href="index.html">返回前台</a>${!DEMO?'<button data-signout>登出</button>':''}</div>
       </aside>
@@ -131,10 +134,11 @@
   function renderMain(){
     if(state.tab==='organizations')return organizationsView();
     if(state.tab==='resources')return resourcesView();
+    if(state.tab==='booking-policy')return bookingPolicyView();
     if(state.tab==='borrowing')return borrowingStatusView();
     if(state.tab==='purposes')return purposeOptionsView();
     if(state.tab==='bookings')return bookingsView();
-    if(state.tab==='telegram')return telegramSettingsView();
+    if(state.tab==='telegram')return telegramView();
     return dashboardView();
   }
   function top(title,desc,extra=''){return `<div class="topbar"><div><h2>${title}</h2><p>${desc}</p></div><div class="top-actions"><span class="chip">${DEMO?'DEMO':'LIVE'}</span>${extra}</div></div>`;}
@@ -151,7 +155,7 @@
       <div class="grid-two">
         <section class="panel"><div class="panel-head"><div><h3>機構列表</h3><p>共 ${state.organizations.length} 個機構</p></div><button class="btn btn-primary" data-new-org>＋ 新增機構</button></div>
           <div class="table-wrap"><table><thead><tr><th>機構名稱</th><th>前台密碼</th><th>狀態</th><th>房間／物品</th><th>操作</th></tr></thead><tbody>
-          ${state.organizations.length?state.organizations.map(org=>`<tr><td><strong>${esc(org.name)}</strong></td><td><span class="tag blue">已設定</span></td><td><span class="tag ${org.active?'green':'gray'}">${org.active?'啟用':'停用'}</span></td><td>${state.resources.filter(r=>r.organization_id===org.id).length}</td><td><div class="row-actions"><button class="btn btn-secondary btn-small" data-edit-org="${org.id}">修改</button><button class="btn btn-danger btn-small" data-delete-org="${org.id}">刪除</button></div></td></tr>`).join(''):`<tr><td colspan="5" class="empty">尚未建立機構</td></tr>`}
+          ${state.organizations.length?state.organizations.map(org=>`<tr><td><strong>${esc(org.name)}</strong></td><td><span class="tag blue">已設定</span></td><td><span class="tag ${org.active?'green':'gray'}">${org.active?'啟用':'停用'}</span></td><td>${state.resources.filter(r=>r.organization_id===org.id).length}</td><td><div class="row-actions"><button class="btn btn-secondary btn-small" data-edit-org="${org.id}">修改</button><button class="btn btn-danger btn-small" data-delete-org="${org.id}">刪除</button></div></td></tr>`).join(''):`<tr><td colspan="${state.resourceType==='item'?6:5}" class="empty">尚未建立機構</td></tr>`}
           </tbody></table></div>
         </section>
         <section class="panel"><div class="panel-head"><div><h3>${edit?'修改機構':'新增機構'}</h3><p>${edit?'可同時更改前台登入密碼；留空即保留原密碼':'新機構必須設定前台登入密碼'}</p></div></div>
@@ -176,8 +180,8 @@
       <div class="resource-tabs"><button class="${state.resourceType==='room'?'active':''}" data-resource-tab="room">房間</button><button class="${state.resourceType==='item'?'active':''}" data-resource-tab="item">物品</button></div>
       <div class="grid-two">
         <section class="panel"><div class="panel-head"><div><h3>${state.resourceType==='room'?'房間列表':'物品列表'}</h3><p>共 ${filtered.length} 項</p></div><button class="btn btn-primary" data-new-resource ${!state.organizations.length?'disabled':''}>＋ 新增${state.resourceType==='room'?'房間':'物品'}</button></div>
-          <div class="table-wrap"><table><thead><tr><th>名稱</th><th>機構</th><th>${state.resourceType==='room'?'容量':'庫存'}</th><th>狀態</th><th>操作</th></tr></thead><tbody>
-          ${filtered.length?filtered.map(r=>`<tr><td><div class="resource-name-cell">${r.image_url?`<img class="resource-thumb" src="${attr(r.image_url)}" alt="">`:'<div class="resource-thumb placeholder">無圖</div>'}<div><strong>${esc(r.name)}</strong><div class="mini">${esc(r.location||'')}</div></div></div></td><td>${esc(orgName(r.organization_id))}</td><td>${r.type==='room'?`${Number(r.capacity)||1} 人`:`${Number(r.stock_quantity)||1} 件`}</td><td><span class="tag ${r.active?'green':'gray'}">${r.active?'啟用':'停用'}</span></td><td><div class="row-actions"><button class="btn btn-secondary btn-small" data-edit-resource="${r.id}">修改</button><button class="btn btn-secondary btn-small" data-availability="${r.id}">時段</button><button class="btn btn-danger btn-small" data-delete-resource="${r.id}">刪除</button></div></td></tr>`).join(''):`<tr><td colspan="5" class="empty">尚未建立${state.resourceType==='room'?'房間':'物品'}</td></tr>`}
+          <div class="table-wrap"><table><thead><tr><th>名稱</th><th>機構</th><th>${state.resourceType==='room'?'容量':'庫存'}</th>${state.resourceType==='item'?'<th>分類</th>':''}<th>狀態</th><th>操作</th></tr></thead><tbody>
+          ${filtered.length?filtered.map(r=>`<tr><td><div class="resource-name-cell">${r.image_url?`<img class="resource-thumb" src="${attr(r.image_url)}" alt="">`:'<div class="resource-thumb placeholder">無圖</div>'}<div><strong>${esc(r.name)}</strong><div class="mini">${esc(r.location||'')}</div></div></div></td><td>${esc(orgName(r.organization_id))}</td><td>${r.type==='room'?`${Number(r.capacity)||1} 人`:`${Number(r.stock_quantity)||1} 件`}</td>${r.type==='item'?`<td>${esc(r.category||'未分類')}</td>`:''}<td><span class="tag ${r.active?'green':'gray'}">${r.active?'啟用':'停用'}</span></td><td><div class="row-actions"><button class="btn btn-secondary btn-small" data-edit-resource="${r.id}">修改</button><button class="btn btn-secondary btn-small" data-availability="${r.id}">時段</button><button class="btn btn-danger btn-small" data-delete-resource="${r.id}">刪除</button></div></td></tr>`).join(''):`<tr><td colspan="${state.resourceType==='item'?6:5}" class="empty">尚未建立${state.resourceType==='room'?'房間':'物品'}</td></tr>`}
           </tbody></table></div>
         </section>
         <div>
@@ -187,7 +191,7 @@
                 <div class="field full"><span>所屬機構 *</span><select class="select" name="organization_id" required><option value="">請選擇</option>${orgOptions}</select></div>
                 <div class="field full"><span>名稱 *</span><input class="input" name="name" required maxlength="120" value="${attr(edit?.name||'')}" placeholder="例如：活動室 1-2"></div>
                 <div class="field"><span>位置</span><input class="input" name="location" value="${attr(edit?.location||'')}" placeholder="例如：1/F"></div>
-                ${state.resourceType==='room'?`<div class="field"><span>可容納人數 *</span><input class="input" type="number" name="capacity" min="1" required value="${edit?.capacity||20}"></div>`:`<div class="field"><span>庫存數量 *</span><input class="input" type="number" name="stock_quantity" min="1" required value="${edit?.stock_quantity||1}"></div>`}
+                ${state.resourceType==='room'?`<div class="field"><span>可容納人數 *</span><input class="input" type="number" name="capacity" min="1" required value="${edit?.capacity||20}"></div>`:`<div class="field"><span>庫存數量 *</span><input class="input" type="number" name="stock_quantity" min="1" required value="${edit?.stock_quantity||1}"></div><div class="field"><span>物品分類</span><input class="input" name="category" maxlength="60" value="${attr(edit?.category||'')}" placeholder="例如：影音器材／輔助器材／運動用品"></div>`}
                 <div class="field full"><span>圖片</span><div class="admin-image-box">${edit?.image_url?`<img data-resource-image-preview src="${attr(edit.image_url)}" alt="資源圖片">`:'<div data-resource-image-empty>尚未上載圖片</div>'}</div><input class="input" type="file" name="image" accept="image/jpeg,image/png,image/webp"><div class="mini">支援 JPG、PNG、WebP，建議 2MB 以下。</div></div><div class="field full"><span>描述</span><textarea class="textarea" name="description" placeholder="簡單描述用途或借用限制">${esc(edit?.description||'')}</textarea></div>
                 ${state.resourceType==='item'?`<label class="checkline full"><input type="checkbox" name="requires_room" ${edit?.requires_room?'checked':''}> 此物品只可配合房間預約／中心內使用（不勾選＝可同房間預約及可單獨外借）</label>`:''}
                 <label class="checkline full"><input type="checkbox" name="active" ${!edit||edit.active?'checked':''}> 啟用此資源</label>
@@ -209,6 +213,35 @@
         <div class="form-actions"><button class="btn btn-primary" type="submit">新增時段</button></div>
       </form>
       <div class="availability-list" style="margin-top:12px">${list.length?list.map(a=>`<div class="availability-row"><span>${a.specific_date?esc(a.specific_date):weekdayNames[Number(a.weekday)]}</span><span>${shortTime(a.start_time)}–${shortTime(a.end_time)}</span><span><span class="tag ${a.active?'green':'gray'}">${a.active?'啟用':'停用'}</span></span><button class="btn btn-danger btn-small" data-delete-av="${a.id}">刪除</button></div>`).join(''):'<div class="empty">尚未設定可用時段</div>'}</div>
+      </section>`;
+  }
+
+  function bookingPolicyView(){
+    const p=state.bookingPolicy||{};
+    return `${top('開放申請期限','設定所有房間及物品何時開放預約')}
+      <section class="panel">
+        <div class="panel-head"><div><h3>全站預約開放規則</h3><p>房間及物品共用同一規則；關閉規則時維持原有預約方式。</p></div></div>
+        <form data-booking-policy-form class="form-card">
+          <label class="checkline"><input type="checkbox" name="active" ${p.active?'checked':''}> 啟用開放申請期限</label>
+          <div class="form-grid" style="margin-top:14px">
+            <div class="field full"><span>開放方式</span><select class="select" name="mode">
+              <option value="fixed_month_day" ${p.mode==='fixed_month_day'?'selected':''}>每月指定日子開放未來一段期間</option>
+              <option value="days_before_period" ${p.mode==='days_before_period'?'selected':''}>指定期數開始前 N 日開放</option>
+            </select></div>
+            <div class="field"><span>期間</span><select class="select" name="scope">
+              <option value="week" ${p.scope==='week'?'selected':''}>星期</option>
+              <option value="month" ${p.scope==='month'?'selected':''}>月</option>
+              <option value="quarter" ${p.scope==='quarter'?'selected':''}>季</option>
+            </select></div>
+            <div class="field"><span>每月指定日子（1–28）</span><input class="input" type="number" name="fixed_day" min="1" max="28" value="${Number(p.fixed_day||1)}"></div>
+            <div class="field"><span>提前日數 N（0–365）</span><input class="input" type="number" name="days_before" min="0" max="365" value="${Number(p.days_before||7)}"></div>
+          </div>
+          <div class="notice" style="margin-top:12px"><strong>規則說明：</strong><br>
+            「每月指定日子」：例如每月 1 日起，開放未來 1 星期／1 個月／1 季內日期。<br>
+            「提前 N 日」：例如選「月」及 7 日，每個月份開始前 7 日起，該月份日期才可預約。
+          </div>
+          <div class="form-actions"><button class="btn btn-primary" type="submit">儲存開放期限</button></div>
+        </form>
       </section>`;
   }
 
@@ -372,64 +405,34 @@
   }
 
 
-  function telegramSettingsView(){
-    const t=state.telegramSettings||{};
-    return `${top('Telegram 通知','新申請提交後即時將申請內容推送到指定 Telegram')}
+  function telegramView(){
+    const st=state.telegramStatus||{};
+    const configured=!!st.configured;
+    return `${top('Telegram 通知','新申請提交後，自動將申請內容發送到指定 Telegram 對話')}
       <div class="grid-two">
-        <section class="panel"><div class="panel-head"><div><h3>通知設定</h3><p>Bot Token 會加密存入 Supabase Vault，不會顯示在網站程式碼。</p></div></div>
-          <form data-telegram-form class="form-card">
-            <div class="field"><span>Bot Token ${t.bot_token_configured?'（已設定；留空＝保留原 Token）':'*'}</span><input class="input" type="password" name="bot_token" autocomplete="off" placeholder="例如：123456789:AA..." ${t.bot_token_configured?'':'required'}></div>
-            <div class="field"><span>Telegram Chat ID *</span><input class="input" type="text" inputmode="numeric" name="chat_id" required value="${attr(t.chat_id||'')}" placeholder="例如：123456789；群組通常為負數"></div>
-            <label class="checkline" style="margin-top:12px"><input type="checkbox" name="enabled" ${t.enabled?'checked':''}> 啟用新申請 Telegram 通知</label>
-            <div class="form-actions"><button class="btn btn-primary" type="submit">儲存設定</button></div>
-          </form>
-        </section>
-        <section class="panel"><div class="panel-head"><div><h3>狀態及測試</h3><p>設定完成後可即時發送測試訊息。</p></div></div>
+        <section class="panel">
+          <div class="panel-head"><div><h3>通知狀態</h3><p>Bot Token 及 Chat ID 會加密儲存在 Supabase Vault</p></div></div>
           <div class="form-card">
-            <div class="notice">Bot Token：${t.bot_token_configured?'<strong>已安全設定</strong>':'<strong>尚未設定</strong>'}<br>Chat ID：<strong>${esc(t.chat_id||'尚未設定')}</strong><br>通知狀態：<strong>${t.enabled?'已啟用':'已停用'}</strong></div>
-            <div class="mini" style="margin-top:12px">首次使用：在 Telegram 的 @BotFather 建立 Bot，先向 Bot 傳送 /start，再取得 Chat ID。詳情見 TELEGRAM_INSTALL.md。</div>
-            <div class="form-actions"><button class="btn btn-secondary" type="button" data-telegram-test ${!t.bot_token_configured||!t.chat_id?'disabled':''}>發送測試通知</button></div>
+            <div class="notice">目前狀態：<strong>${configured?'已啟用':'尚未設定'}</strong></div>
+            <div class="mini" style="margin-top:12px">Bot Token：${st.bot_token_set?'已設定':'未設定'}</div>
+            <div class="mini">Chat ID：${st.chat_id_set?esc(st.chat_id_masked||'已設定'):'未設定'}</div>
+            <div class="form-actions"><button class="btn btn-secondary" data-telegram-test ${configured?'':'disabled'}>發送測試通知</button></div>
           </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><div><h3>Telegram Bot 設定</h3><p>重新儲存會取代現有設定</p></div></div>
+          <form class="form-card" data-telegram-form>
+            <div class="field"><span>Bot Token *</span><input class="input" type="password" name="bot_token" required autocomplete="new-password" placeholder="例如：123456789:AA..."></div>
+            <div class="field"><span>Chat ID *</span><input class="input" name="chat_id" required placeholder="例如：123456789 或 -100..."></div>
+            <div class="mini" style="margin-top:8px">Bot Token 不會寫入前端檔案，只會由管理員登入後直接送到 Supabase Vault。</div>
+            <div class="form-actions"><button class="btn btn-primary" type="submit">儲存 Telegram 設定</button></div>
+          </form>
         </section>
       </div>`;
   }
 
-  async function loadTelegramSettings(){
-    if(DEMO)return;
-    const r=await supabase.rpc('admin_get_telegram_settings');
-    if(r.error)throw r.error;
-    state.telegramSettings={enabled:false,bot_token_configured:false,chat_id:'',updated_at:null,...(r.data||{})};
-  }
-
-  async function saveTelegramSettings(e){
-    e.preventDefault();
-    const fd=new FormData(e.currentTarget);
-    const botToken=String(fd.get('bot_token')||'').trim();
-    const chatId=String(fd.get('chat_id')||'').trim();
-    const enabled=fd.get('enabled')==='on';
-    if(!chatId)return toast('請輸入 Telegram Chat ID','error');
-    try{
-      if(DEMO){state.telegramSettings={...state.telegramSettings,enabled,bot_token_configured:!!(botToken||state.telegramSettings.bot_token_configured),chat_id:chatId,updated_at:new Date().toISOString()};}
-      else{
-        const r=await supabase.rpc('admin_set_telegram_settings',{p_bot_token:botToken||null,p_chat_id:chatId,p_enabled:enabled});
-        if(r.error)throw r.error;
-        state.telegramSettings={enabled:false,bot_token_configured:false,chat_id:'',updated_at:null,...(r.data||{})};
-      }
-      toast('Telegram 通知設定已儲存','success');render();
-    }catch(err){toast('未能儲存 Telegram 設定：'+errorMessage(err),'error');}
-  }
-
-  async function testTelegramNotification(){
-    if(DEMO)return toast('Demo Mode 不會實際發送 Telegram 訊息','success');
-    try{
-      const r=await supabase.rpc('admin_test_telegram_notification');
-      if(r.error)throw r.error;
-      toast('測試通知已排隊發送，請查看 Telegram','success');
-    }catch(err){toast('Telegram 測試失敗：'+errorMessage(err),'error');}
-  }
-
   function bind(){
-    qsa('[data-tab]').forEach(b=>b.onclick=async()=>{state.tab=b.dataset.tab;state.editingOrgId=null;state.editingResourceId=null;if(state.tab==='telegram'&&!DEMO){try{await loadTelegramSettings();}catch(err){toast('未能載入 Telegram 設定：'+errorMessage(err),'error');}}render();});
+    qsa('[data-tab]').forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;state.editingOrgId=null;state.editingResourceId=null;render();});
     on('[data-new-org]','click',()=>{state.editingOrgId=null;render();setTimeout(()=>qs('[data-org-form] input[name=name]')?.focus(),0)});
     qsa('[data-edit-org]').forEach(b=>b.onclick=()=>{state.editingOrgId=b.dataset.editOrg;render();});
     on('[data-cancel-org]','click',()=>{state.editingOrgId=null;render();});
@@ -471,9 +474,56 @@
     qsa('[data-calendar-delete-booking]').forEach(b=>b.onclick=()=>deleteCalendarBooking(b.dataset.calendarDeleteBooking));
     qsa('[data-block-date]').forEach(b=>b.onclick=()=>blockCalendarDate(b.dataset.blockDate));
     qsa('[data-unblock-date]').forEach(b=>b.onclick=()=>unblockCalendarDate(b.dataset.unblockDate));
+    on('[data-booking-policy-form]','submit',saveBookingPolicy);
     on('[data-telegram-form]','submit',saveTelegramSettings);
     on('[data-telegram-test]','click',testTelegramNotification);
     on('[data-signout]','click',async()=>{if(supabase)await supabase.auth.signOut();location.reload();});
+  }
+
+  async function saveBookingPolicy(e){
+    e.preventDefault();
+    const fd=new FormData(e.currentTarget);
+    const payload={
+      active:fd.get('active')==='on',
+      mode:String(fd.get('mode')||'fixed_month_day'),
+      scope:String(fd.get('scope')||'month'),
+      fixed_day:Math.min(28,Math.max(1,Number(fd.get('fixed_day')||1))),
+      days_before:Math.min(365,Math.max(0,Number(fd.get('days_before')||0))),
+      updated_at:new Date().toISOString()
+    };
+    try{
+      if(DEMO){state.bookingPolicy={singleton:true,...payload};toast('開放申請期限已儲存（Demo）','success');render();return;}
+      const r=await supabase.from('booking_policy').update(payload).eq('singleton',true).select().single();
+      if(r.error)throw r.error;
+      state.bookingPolicy=r.data||{...state.bookingPolicy,...payload};
+      toast('開放申請期限已儲存','success');render();
+    }catch(err){toast('未能儲存開放期限：'+errorMessage(err),'error');}
+  }
+
+  async function saveTelegramSettings(e){
+    e.preventDefault();
+    if(DEMO)return toast('Demo Mode 不會連接 Telegram；請使用 Supabase LIVE 模式。','error');
+    const fd=new FormData(e.currentTarget);
+    const botToken=String(fd.get('bot_token')||'').trim();
+    const chatId=String(fd.get('chat_id')||'').trim();
+    if(!botToken||!chatId)return toast('請輸入 Bot Token 及 Chat ID','error');
+    try{
+      const r=await supabase.rpc('admin_set_telegram_notification',{p_bot_token:botToken,p_chat_id:chatId});
+      if(r.error)throw r.error;
+      const st=await supabase.rpc('admin_get_telegram_notification_status');
+      if(st.error)throw st.error;
+      state.telegramStatus=st.data||state.telegramStatus;
+      toast('Telegram 設定已安全儲存','success');render();
+    }catch(err){toast('未能儲存 Telegram 設定：'+errorMessage(err),'error');}
+  }
+
+  async function testTelegramNotification(){
+    if(DEMO)return toast('Demo Mode 不會連接 Telegram。','error');
+    try{
+      const r=await supabase.rpc('admin_test_telegram_notification');
+      if(r.error)throw r.error;
+      toast('測試通知已送出，請檢查 Telegram','success');
+    }catch(err){toast('測試通知失敗：'+errorMessage(err),'error');}
   }
 
   async function saveOrg(e){
@@ -523,7 +573,7 @@
     e.preventDefault(); const form=e.currentTarget; const fd=new FormData(form); const organization_id=String(fd.get('organization_id')||''); const name=String(fd.get('name')||'').trim();
     if(!organization_id)return toast('請選擇所屬機構','error'); if(!name)return toast('請輸入名稱','error');
     const type=state.resourceType; const existing=state.resources.find(x=>x.id===state.editingResourceId)||null;
-    const payload={organization_id,type,name,location:String(fd.get('location')||'').trim()||null,description:String(fd.get('description')||'').trim()||null,capacity:type==='room'?Math.max(1,Number(fd.get('capacity')||1)):1,stock_quantity:type==='item'?Math.max(1,Number(fd.get('stock_quantity')||1)):1,requires_room:type==='item'&&fd.get('requires_room')==='on',image_url:existing?.image_url||null,active:fd.get('active')==='on'};
+    const payload={organization_id,type,name,location:String(fd.get('location')||'').trim()||null,description:String(fd.get('description')||'').trim()||null,capacity:type==='room'?Math.max(1,Number(fd.get('capacity')||1)):1,stock_quantity:type==='item'?Math.max(1,Number(fd.get('stock_quantity')||1)):1,requires_room:type==='item'&&fd.get('requires_room')==='on',category:type==='item'?(String(fd.get('category')||'').trim()||null):null,image_url:existing?.image_url||null,active:fd.get('active')==='on'};
     const imageFile=fd.get('image');
     try{
       if(imageFile instanceof File && imageFile.size>0){
@@ -744,7 +794,7 @@ ${resourceName(b.resource_id)}｜${b.booking_date}`))return;
   function addDays(iso,days){const d=new Date(`${iso}T12:00:00`);d.setDate(d.getDate()+Number(days||0));return toIsoDate(d);}
   function todayIso(){return toIsoDate(new Date());}
   function statusLabel(s){return ({pending:'待審批',approved:'已批准',rejected:'已拒絕',completed:'已完成',cancelled:'已取消'})[s]||s||'—';}
-  function errorMessage(err){if(!err)return'未知錯誤';if(typeof err==='string')return err;const m=err.message||err.error_description||err.details||'操作失敗';if(/admin_set_organization_portal_password/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v9 機構登入及資料隔離 SQL。';if(/RESOURCE_DATE_BLOCKED/i.test(m))return'所選日期已設為不可借用，請先解除封鎖。';if(/admin_upsert_booking_record|get_public_resource_busy_periods|update_booking_group_status/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v7 日曆新增／修改預約 SQL。';if(/resource_blocks|admin_update_booking_record|admin_delete_booking_record/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v6 借用狀況日曆 SQL。';if(/row-level security|permission denied/i.test(m))return'資料庫權限不足。請確認登入帳戶在 profiles 表中的 role 為 admin，並執行管理權限 SQL。';if(/INVALID_TELEGRAM_BOT_TOKEN/i.test(m))return'Telegram Bot Token 格式不正確。';if(/INVALID_TELEGRAM_CHAT_ID/i.test(m))return'Telegram Chat ID 格式不正確。';if(/TELEGRAM_CONFIG_INCOMPLETE/i.test(m))return'請先設定 Bot Token 及 Chat ID。';if(/admin_(get|set|test)_telegram/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v10.4 Telegram 通知 SQL。';if(/duplicate|unique/i.test(m))return'名稱已存在，請使用另一個名稱。';return m;}
+  function errorMessage(err){if(!err)return'未知錯誤';if(typeof err==='string')return err;const m=err.message||err.error_description||err.details||'操作失敗';if(/admin_set_organization_portal_password/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v9 機構登入及資料隔離 SQL。';if(/RESOURCE_DATE_BLOCKED/i.test(m))return'所選日期已設為不可借用，請先解除封鎖。';if(/admin_upsert_booking_record|get_public_resource_busy_periods|update_booking_group_status/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v7 日曆新增／修改預約 SQL。';if(/resource_blocks|admin_update_booking_record|admin_delete_booking_record/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v6 借用狀況日曆 SQL。';if(/row-level security|permission denied/i.test(m))return'資料庫權限不足。請確認登入帳戶在 profiles 表中的 role 為 admin，並執行管理權限 SQL。';if(/BOOKING_WINDOW_CLOSED/i.test(m))return'所選日期尚未開放預約，請選擇已開放日期。';if(/booking_policy|get_booking_policy/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v10.5 開放申請期限／物品分類 SQL。';if(/TELEGRAM_NOT_CONFIGURED/i.test(m))return'尚未設定 Telegram Bot Token／Chat ID。';if(/BOT_TOKEN_REQUIRED|CHAT_ID_REQUIRED/i.test(m))return'請輸入有效的 Bot Token 及 Chat ID。';if(/admin_set_telegram_notification|admin_get_telegram_notification_status|admin_test_telegram_notification/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v10.4 Telegram 通知 SQL。';if(/duplicate|unique/i.test(m))return'名稱已存在，請使用另一個名稱。';return m;}
   function toast(msg,type=''){const d=document.createElement('div');d.className=`toast ${type}`;d.textContent=msg;toastRoot.appendChild(d);setTimeout(()=>d.remove(),3300);}
   function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
   function attr(s){return esc(s).replace(/"/g,'&quot;');}
