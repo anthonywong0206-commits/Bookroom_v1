@@ -1,7 +1,10 @@
-# v10.7 PATCH
+# v10.8 PATCH
 
-1. 將本 PATCH 內的 `admin-app.js`, `admin.css`, `admin.html`, `app.js`, `styles.css`, `index.html` 覆蓋網站根目錄同名檔案。
-2. 不要刪除或覆蓋你原有的 `config.js`。
-3. 你現時的 LIVE Supabase 已經套用 v10.7 migration，所以毋須再執行 SQL。
-4. 如部署到另一個 Supabase，才執行 `supabase/20260922_v10_7_booking_management.sql`。
-5. 部署完成後按 Ctrl + F5。
+將 PATCH 內檔案覆蓋網站根目錄同名檔案：
+- index.html
+- app.js
+- styles.css
+
+`config.js` 不包含在 PATCH，現有 Supabase / 管理員設定不會被覆蓋。
+本版本不需要執行 Supabase SQL。
+部署後建議重新整理／關閉再重開網站，確保載入 v10.8 cache-busting 檔案。

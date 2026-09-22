@@ -69,6 +69,7 @@
   init();
 
   async function init() {
+    setupMobileViewportStability();
     hydrateStored();
     hydratePortalSession();
     setupSyncListeners();
@@ -421,6 +422,44 @@
     return message;
   }
 
+
+  // v10.8: keep mobile layout stable when the on-screen keyboard opens/closes.
+  function setupMobileViewportStability() {
+    const root = document.documentElement;
+    let focusTimer = null;
+    const updateViewport = () => {
+      const vv = window.visualViewport;
+      const height = vv ? vv.height : window.innerHeight;
+      root.style.setProperty('--mobile-viewport-height', `${Math.max(320, Math.round(height))}px`);
+      const keyboardOpen = vv ? (window.innerHeight - vv.height > 140) : false;
+      document.body.classList.toggle('keyboard-open', keyboardOpen);
+    };
+    updateViewport();
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', updateViewport, { passive: true });
+      window.visualViewport.addEventListener('scroll', updateViewport, { passive: true });
+    }
+    window.addEventListener('orientationchange', () => setTimeout(updateViewport, 180), { passive: true });
+    document.addEventListener('focusin', (event) => {
+      const el = event.target;
+      if (!(el instanceof HTMLElement) || !el.matches('input, textarea, select')) return;
+      clearTimeout(focusTimer);
+      focusTimer = setTimeout(() => {
+        const rect = el.getBoundingClientRect();
+        const vv = window.visualViewport;
+        const visibleTop = vv ? vv.offsetTop : 0;
+        const visibleBottom = visibleTop + (vv ? vv.height : window.innerHeight) - 110;
+        if (rect.bottom > visibleBottom || rect.top < visibleTop + 72) {
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+      }, 260);
+    });
+    document.addEventListener('focusout', () => {
+      clearTimeout(focusTimer);
+      setTimeout(updateViewport, 180);
+    });
+  }
+
   function render() {
     app.innerHTML = `
       <div class="app-shell">
@@ -663,8 +702,8 @@
           <div class="summary-row"><span>同日物品</span><strong>${items.length ? items.map(x => `${escapeHtml(x.name)} × ${x.qty}`).join('、') : '不需要'}</strong></div>
         </div>
         <div class="form-grid" style="margin-top:16px;">
-          <div><label class="field-label">申請者姓名 *</label><input class="input" data-field="room-name" value="${escapeAttr(state.roomFlow.applicantName)}" placeholder="請輸入姓名" /></div>
-          <div><label class="field-label">電話 *</label><input class="input" data-field="room-phone" value="${escapeAttr(state.roomFlow.phone)}" placeholder="請輸入電話" /></div>
+          <div><label class="field-label">申請者姓名 *</label><input class="input" type="text" autocomplete="name" enterkeyhint="next" data-field="room-name" value="${escapeAttr(state.roomFlow.applicantName)}" placeholder="請輸入姓名" /></div>
+          <div><label class="field-label">電話 *</label><input class="input" type="tel" inputmode="tel" autocomplete="tel" enterkeyhint="next" data-field="room-phone" value="${escapeAttr(state.roomFlow.phone)}" placeholder="請輸入電話" /></div>
           <div class="full-width-field"><label class="field-label">用途 *</label>${renderPurposeButtons('roomFlow')}</div>
           <div class="full-width-field"><label class="field-label">備註</label><textarea class="textarea" data-field="room-notes" placeholder="如有特別安排可在此註明">${escapeHtml(state.roomFlow.notes)}</textarea></div>
         </div>
@@ -728,8 +767,8 @@
           <div class="summary-row"><span>歸還日期</span><strong>${formatDate(state.loanFlow.returnDate)}</strong></div>
         </div>
         <div class="form-grid" style="margin-top:16px;">
-          <div><label class="field-label">申請者姓名 *</label><input class="input" data-field="loan-name" value="${escapeAttr(state.loanFlow.applicantName)}" placeholder="請輸入姓名" /></div>
-          <div><label class="field-label">電話 *</label><input class="input" data-field="loan-phone" value="${escapeAttr(state.loanFlow.phone)}" placeholder="請輸入電話" /></div>
+          <div><label class="field-label">申請者姓名 *</label><input class="input" type="text" autocomplete="name" enterkeyhint="next" data-field="loan-name" value="${escapeAttr(state.loanFlow.applicantName)}" placeholder="請輸入姓名" /></div>
+          <div><label class="field-label">電話 *</label><input class="input" type="tel" inputmode="tel" autocomplete="tel" enterkeyhint="next" data-field="loan-phone" value="${escapeAttr(state.loanFlow.phone)}" placeholder="請輸入電話" /></div>
           <div class="full-width-field"><label class="field-label">用途 *</label>${renderPurposeButtons('loanFlow')}</div>
           <div class="full-width-field"><label class="field-label">備註</label><textarea class="textarea" data-field="loan-notes" placeholder="如有特別安排可在此註明">${escapeHtml(state.loanFlow.notes)}</textarea></div>
         </div>
