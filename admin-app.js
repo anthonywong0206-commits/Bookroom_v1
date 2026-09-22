@@ -7,7 +7,7 @@
   const DEMO_KEY='rrbs_admin_demo_v4';
   const SYNC_CHANNEL='rrbs-resource-sync';
   let syncChannel=null;
-  const state={tab:'organizations',organizations:[],resources:[],availability:[],bookings:[],resourceBlocks:[],purposeOptions:[],resourceType:'room',editingOrgId:null,editingResourceId:null,selectedResourceId:null,editingPurposeId:null,user:null,loading:false,error:'',calendarResourceId:null,calendarMonthOffset:0,calendarSelectedDate:null,editingCalendarBookingId:null,creatingCalendarBooking:false,telegramStatus:{configured:false,bot_token_set:false,chat_id_set:false,chat_id_masked:null},bookingPolicy:{active:false,mode:'fixed_month_day',scope:'month',fixed_day:20,days_before:14,open_time:'12:00:00'}};
+  const state={tab:'organizations',organizations:[],resources:[],availability:[],timeOverrides:[],bookings:[],resourceBlocks:[],purposeOptions:[],resourceType:'room',editingOrgId:null,editingResourceId:null,selectedResourceId:null,editingPurposeId:null,user:null,loading:false,error:'',calendarResourceId:null,calendarMonthOffset:0,calendarSelectedDate:null,editingCalendarBookingId:null,creatingCalendarBooking:false,telegramStatus:{configured:false,bot_token_set:false,chat_id_set:false,chat_id_masked:null},bookingPolicy:{active:false,mode:'fixed_month_day',scope:'month',fixed_day:20,days_before:14,open_time:'12:00:00'}};
   let supabase=null;
 
   const seed={
@@ -70,6 +70,7 @@
       .on('postgres_changes',{event:'*',schema:'public',table:'organizations'},async()=>{await refreshAll();render();})
       .on('postgres_changes',{event:'*',schema:'public',table:'resources'},async()=>{await refreshAll();render();})
       .on('postgres_changes',{event:'*',schema:'public',table:'resource_availability'},async()=>{await refreshAll();render();})
+      .on('postgres_changes',{event:'*',schema:'public',table:'resource_time_overrides'},async()=>{await refreshAll();render();})
       .on('postgres_changes',{event:'*',schema:'public',table:'bookings'},async()=>{await refreshAll();render();})
       .on('postgres_changes',{event:'*',schema:'public',table:'resource_blocks'},async()=>{await refreshAll();render();})
       .on('postgres_changes',{event:'*',schema:'public',table:'purpose_options'},async()=>{await refreshAll();render();})
@@ -83,15 +84,16 @@
       state.organizations=clone(data.organizations||[]);
       state.resources=clone(data.resources||[]);
       state.availability=clone(data.availability||[]);
+      state.timeOverrides=clone(data.timeOverrides||[]);
       state.bookings=clone(data.bookings||[]);
       state.resourceBlocks=clone(data.resourceBlocks||data.resource_blocks||[]);
       state.purposeOptions=clone(data.purposeOptions||data.purpose_options||seed.purposeOptions); state.telegramStatus={configured:false,bot_token_set:false,chat_id_set:false,chat_id_masked:null};
       if(!saved) persistDemo();
     }catch(_){
-      state.organizations=clone(seed.organizations); state.resources=clone(seed.resources); state.availability=clone(seed.availability); state.bookings=[]; state.resourceBlocks=[]; state.purposeOptions=clone(seed.purposeOptions); state.telegramStatus={configured:false,bot_token_set:false,chat_id_set:false,chat_id_masked:null}; persistDemo();
+      state.organizations=clone(seed.organizations); state.resources=clone(seed.resources); state.availability=clone(seed.availability); state.timeOverrides=[]; state.bookings=[]; state.resourceBlocks=[]; state.purposeOptions=clone(seed.purposeOptions); state.telegramStatus={configured:false,bot_token_set:false,chat_id_set:false,chat_id_masked:null}; persistDemo();
     }
   }
-  function persistDemo(){ localStorage.setItem(DEMO_KEY,JSON.stringify({organizations:state.organizations,resources:state.resources,availability:state.availability,bookings:state.bookings,resourceBlocks:state.resourceBlocks,purposeOptions:state.purposeOptions})); if(syncChannel)syncChannel.postMessage({type:'changed',at:Date.now()}); }
+  function persistDemo(){ localStorage.setItem(DEMO_KEY,JSON.stringify({organizations:state.organizations,resources:state.resources,availability:state.availability,timeOverrides:state.timeOverrides,bookings:state.bookings,resourceBlocks:state.resourceBlocks,purposeOptions:state.purposeOptions})); if(syncChannel)syncChannel.postMessage({type:'changed',at:Date.now()}); }
   function clone(v){return JSON.parse(JSON.stringify(v));}
   function uid(prefix){return prefix+'-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8);}
 
@@ -101,17 +103,18 @@
     return data&&data.role==='admin';
   }
   async function refreshAll(){
-    const [orgs,res,av,bks,blocks,purposes,policy]=await Promise.all([
+    const [orgs,res,av,overrides,bks,blocks,purposes,policy]=await Promise.all([
       supabase.from('organizations').select('id,name,active,created_at,updated_at').order('name'),
       supabase.from('resources').select('*').order('type').order('name'),
       supabase.from('resource_availability').select('*').order('resource_id'),
+      supabase.from('resource_time_overrides').select('*').order('resource_id').order('override_date').order('start_time'),
       supabase.from('bookings').select('*').order('created_at',{ascending:false}).limit(1000),
       supabase.from('resource_blocks').select('*').order('block_date'),
       supabase.from('purpose_options').select('*').order('sort_order').order('label'),
       supabase.from('booking_policy').select('*').eq('singleton',true).maybeSingle()
     ]);
-    for(const r of [orgs,res,av,bks,blocks,purposes,policy]) if(r.error) throw r.error;
-    state.organizations=orgs.data||[]; state.resources=res.data||[]; state.availability=av.data||[]; state.bookings=bks.data||[]; state.resourceBlocks=blocks.data||[]; state.purposeOptions=purposes.data||[]; if(policy.data)state.bookingPolicy=policy.data;
+    for(const r of [orgs,res,av,overrides,bks,blocks,purposes,policy]) if(r.error) throw r.error;
+    state.organizations=orgs.data||[]; state.resources=res.data||[]; state.availability=av.data||[]; state.timeOverrides=overrides.data||[]; state.bookings=bks.data||[]; state.resourceBlocks=blocks.data||[]; state.purposeOptions=purposes.data||[]; if(policy.data)state.bookingPolicy=policy.data;
     const tg=await supabase.rpc('admin_get_telegram_notification_status');
     if(!tg.error&&tg.data)state.telegramStatus=tg.data;
   }
@@ -122,7 +125,7 @@
         <div class="admin-brand"><div class="admin-brand-mark">R</div><div><h1>資源預約管理</h1><p>房間及物品預約系統</p></div></div>
         <div class="mode-note">${DEMO?'Demo Mode：修改會儲存在此瀏覽器':'Supabase 正式模式'}</div>
         <nav class="side-nav">
-          ${navBtn('organizations','機構管理')}${navBtn('resources','房間／物品')}${navBtn('booking-policy','開放申請期限')}${navBtn('borrowing','借用狀況')}${navBtn('purposes','用途設定')}${navBtn('bookings','申請審批')}${navBtn('telegram','Telegram 通知')}${navBtn('dashboard','概覽')}
+          ${navBtn('organizations','機構管理')}${navBtn('resources','房間／物品')}${navBtn('booking-policy','開放申請期限')}${navBtn('room-booking','房間預約管理')}${navBtn('item-booking','物品預約管理')}${navBtn('purposes','用途設定')}${navBtn('bookings','申請審批')}${navBtn('telegram','Telegram 通知')}${navBtn('dashboard','概覽')}
         </nav>
         <div class="sidebar-bottom"><a href="index.html">返回前台</a>${!DEMO?'<button data-signout>登出</button>':''}</div>
       </aside>
@@ -135,7 +138,8 @@
     if(state.tab==='organizations')return organizationsView();
     if(state.tab==='resources')return resourcesView();
     if(state.tab==='booking-policy')return bookingPolicyView();
-    if(state.tab==='borrowing')return borrowingStatusView();
+    if(state.tab==='room-booking')return bookingManagementView('room');
+    if(state.tab==='item-booking')return bookingManagementView('item');
     if(state.tab==='purposes')return purposeOptionsView();
     if(state.tab==='bookings')return bookingsView();
     if(state.tab==='telegram')return telegramView();
@@ -174,46 +178,85 @@
     const orgOptions=state.organizations.map(o=>`<option value="${o.id}">${esc(o.name)}</option>`).join('');
     const filtered=state.resources.filter(r=>r.type===state.resourceType);
     const edit=state.resources.find(x=>x.id===state.editingResourceId)||null;
-    const selected=state.resources.find(x=>x.id===state.selectedResourceId)||edit||null;
-    return `${top('房間／物品管理','新增、修改、刪除資源及設定可用時段')}
+    return `${top('房間／物品設定','管理房間及物品的基本資料；開放時段請到預約管理設定')}
       ${!state.organizations.length?'<div class="error-box">請先建立至少一個機構，才可新增房間或物品。</div>':''}
       <div class="resource-tabs"><button class="${state.resourceType==='room'?'active':''}" data-resource-tab="room">房間</button><button class="${state.resourceType==='item'?'active':''}" data-resource-tab="item">物品</button></div>
-      <div class="grid-two">
-        <section class="panel"><div class="panel-head"><div><h3>${state.resourceType==='room'?'房間列表':'物品列表'}</h3><p>共 ${filtered.length} 項</p></div><button class="btn btn-primary" data-new-resource ${!state.organizations.length?'disabled':''}>＋ 新增${state.resourceType==='room'?'房間':'物品'}</button></div>
-          <div class="table-wrap"><table><thead><tr><th>名稱</th><th>機構</th><th>${state.resourceType==='room'?'容量':'庫存'}</th>${state.resourceType==='item'?'<th>分類</th>':''}<th>狀態</th><th>操作</th></tr></thead><tbody>
-          ${filtered.length?filtered.map(r=>`<tr><td><div class="resource-name-cell">${r.image_url?`<img class="resource-thumb" src="${attr(r.image_url)}" alt="">`:'<div class="resource-thumb placeholder">無圖</div>'}<div><strong>${esc(r.name)}</strong><div class="mini">${esc(r.location||'')}</div></div></div></td><td>${esc(orgName(r.organization_id))}</td><td>${r.type==='room'?`${Number(r.capacity)||1} 人`:`${Number(r.stock_quantity)||1} 件`}</td>${r.type==='item'?`<td>${esc(r.category||'未分類')}</td>`:''}<td><span class="tag ${r.active?'green':'gray'}">${r.active?'啟用':'停用'}</span></td><td><div class="row-actions"><button class="btn btn-secondary btn-small" data-edit-resource="${r.id}">修改</button><button class="btn btn-secondary btn-small" data-availability="${r.id}">時段</button><button class="btn btn-danger btn-small" data-delete-resource="${r.id}">刪除</button></div></td></tr>`).join(''):`<tr><td colspan="${state.resourceType==='item'?6:5}" class="empty">尚未建立${state.resourceType==='room'?'房間':'物品'}</td></tr>`}
+      <div class="grid-two resource-settings-grid">
+        <section class="panel"><div class="panel-head"><div><h3>${state.resourceType==='room'?'房間列表':'物品列表'}</h3><p>共 ${filtered.length} 項・此頁只管理基本資料</p></div><button class="btn btn-primary" data-new-resource ${!state.organizations.length?'disabled':''}>＋ 新增${state.resourceType==='room'?'房間':'物品'}</button></div>
+          <div class="table-wrap"><table><thead><tr><th>名稱／簡介</th><th>機構</th><th>${state.resourceType==='room'?'容量':'庫存'}</th>${state.resourceType==='item'?'<th>分類</th>':''}<th>狀態</th><th>操作</th></tr></thead><tbody>
+          ${filtered.length?filtered.map(r=>`<tr><td><div class="resource-name-cell">${r.image_url?`<img class="resource-thumb" src="${attr(r.image_url)}" alt="">`:'<div class="resource-thumb placeholder">無圖</div>'}<div><strong>${esc(r.name)}</strong><div class="mini">${esc(r.description||'未有簡介')}</div></div></div></td><td>${esc(orgName(r.organization_id))}</td><td>${r.type==='room'?`${Number(r.capacity)||1} 人`:`${Number(r.stock_quantity)||1} 件`}</td>${r.type==='item'?`<td>${esc(r.category||'未分類')}</td>`:''}<td><span class="tag ${r.active?'green':'gray'}">${r.active?'啟用':'停用'}</span></td><td><div class="row-actions"><button class="btn btn-secondary btn-small" data-edit-resource="${r.id}">修改</button><button class="btn btn-danger btn-small" data-delete-resource="${r.id}">刪除</button></div></td></tr>`).join(''):`<tr><td colspan="${state.resourceType==='item'?6:5}" class="empty">尚未建立${state.resourceType==='room'?'房間':'物品'}</td></tr>`}
           </tbody></table></div>
+          <div class="notice" style="margin-top:14px">時段管理已移至「房間預約管理」及「物品預約管理」。</div>
         </section>
-        <div>
-          <section class="panel"><div class="panel-head"><div><h3>${edit?'修改':'新增'}${state.resourceType==='room'?'房間':'物品'}</h3><p>填寫基本資料後儲存</p></div></div>
-            <form data-resource-form class="form-card">
-              <div class="form-grid">
-                <div class="field full"><span>所屬機構 *</span><select class="select" name="organization_id" required><option value="">請選擇</option>${orgOptions}</select></div>
-                <div class="field full"><span>名稱 *</span><input class="input" name="name" required maxlength="120" value="${attr(edit?.name||'')}" placeholder="例如：活動室 1-2"></div>
-                <div class="field"><span>位置</span><input class="input" name="location" value="${attr(edit?.location||'')}" placeholder="例如：1/F"></div>
-                ${state.resourceType==='room'?`<div class="field"><span>可容納人數 *</span><input class="input" type="number" name="capacity" min="1" required value="${edit?.capacity||20}"></div>`:`<div class="field"><span>庫存數量 *</span><input class="input" type="number" name="stock_quantity" min="1" required value="${edit?.stock_quantity||1}"></div><div class="field"><span>物品分類</span><input class="input" name="category" maxlength="60" value="${attr(edit?.category||'')}" placeholder="例如：影音器材／輔助器材／運動用品"></div>`}
-                <div class="field full"><span>圖片</span><div class="admin-image-box">${edit?.image_url?`<img data-resource-image-preview src="${attr(edit.image_url)}" alt="資源圖片">`:'<div data-resource-image-empty>尚未上載圖片</div>'}</div><input class="input" type="file" name="image" accept="image/jpeg,image/png,image/webp"><div class="mini">支援 JPG、PNG、WebP，建議 2MB 以下。</div></div><div class="field full"><span>描述</span><textarea class="textarea" name="description" placeholder="簡單描述用途或借用限制">${esc(edit?.description||'')}</textarea></div>
-                ${state.resourceType==='item'?`<label class="checkline full"><input type="checkbox" name="requires_room" ${edit?.requires_room?'checked':''}> 此物品只可配合房間預約／中心內使用（不勾選＝可同房間預約及可單獨外借）</label>`:''}
-                <label class="checkline full"><input type="checkbox" name="active" ${!edit||edit.active?'checked':''}> 啟用此資源</label>
-              </div>
-              <div class="form-actions">${edit?'<button type="button" class="btn btn-secondary" data-cancel-resource>取消</button>':''}<button class="btn btn-primary" type="submit" ${!state.organizations.length?'disabled':''}>${edit?'儲存修改':'新增資源'}</button></div>
-            </form>
-          </section>
-          ${selected?availabilityPanel(selected):''}
-        </div>
+        <section class="panel"><div class="panel-head"><div><h3>${edit?'修改':'新增'}${state.resourceType==='room'?'房間':'物品'}</h3><p>填寫名稱、簡介、圖片及基本設定</p></div></div>
+          <form data-resource-form class="form-card">
+            <div class="form-grid">
+              <div class="field full"><span>所屬機構 *</span><select class="select" name="organization_id" required><option value="">請選擇</option>${orgOptions}</select></div>
+              <div class="field full"><span>名稱 *</span><input class="input" name="name" required maxlength="120" value="${attr(edit?.name||'')}" placeholder="例如：活動室 1-2"></div>
+              <div class="field"><span>位置</span><input class="input" name="location" value="${attr(edit?.location||'')}" placeholder="例如：1/F"></div>
+              ${state.resourceType==='room'?`<div class="field"><span>可容納人數 *</span><input class="input" type="number" name="capacity" min="1" required value="${edit?.capacity||20}"></div>`:`<div class="field"><span>庫存數量 *</span><input class="input" type="number" name="stock_quantity" min="1" required value="${edit?.stock_quantity||1}"></div><div class="field"><span>物品分類</span><input class="input" name="category" maxlength="60" value="${attr(edit?.category||'')}" placeholder="例如：影音器材／輔助器材／運動用品"></div>`}
+              <div class="field full"><span>簡介</span><textarea class="textarea" name="description" placeholder="簡單介紹用途、特色或借用須知">${esc(edit?.description||'')}</textarea></div>
+              <div class="field full"><span>圖片</span><div class="admin-image-box">${edit?.image_url?`<img data-resource-image-preview src="${attr(edit.image_url)}" alt="資源圖片">`:'<div data-resource-image-empty>尚未上載圖片</div>'}</div><input class="input" type="file" name="image" accept="image/jpeg,image/png,image/webp"><div class="mini">支援 JPG、PNG、WebP，建議 2MB 以下。</div></div>
+              ${state.resourceType==='item'?`<label class="checkline full"><input type="checkbox" name="requires_room" ${edit?.requires_room?'checked':''}> 此物品只可配合房間預約／中心內使用</label>`:''}
+              <label class="checkline full"><input type="checkbox" name="active" ${!edit||edit.active?'checked':''}> 啟用此資源</label>
+            </div>
+            <div class="form-actions">${edit?'<button type="button" class="btn btn-secondary" data-cancel-resource>取消</button>':''}<button class="btn btn-primary" type="submit" ${!state.organizations.length?'disabled':''}>${edit?'儲存修改':'新增資源'}</button></div>
+          </form>
+        </section>
       </div>`;
   }
 
-  function availabilityPanel(resource){
-    const list=state.availability.filter(a=>a.resource_id===resource.id);
-    const weekdayNames=['星期日','星期一','星期二','星期三','星期四','星期五','星期六'];
-    return `<section class="panel"><div class="panel-head"><div><h3>${esc(resource.name)}：可用時段</h3><p>新增每星期固定時段或指定日期時段</p></div></div>
-      <form data-av-form class="form-card">
-        <div class="form-grid"><div class="field"><span>模式</span><select class="select" name="mode"><option value="weekday">每星期</option><option value="date">指定日期</option></select></div><div class="field" data-av-weekday><span>星期</span><select class="select" name="weekday">${weekdayNames.map((n,i)=>`<option value="${i}">${n}</option>`).join('')}</select></div><div class="field" data-av-date style="display:none"><span>指定日期</span><input class="input" type="date" name="specific_date"></div><div class="field"><span>開始時間</span><input class="input" type="time" name="start_time" required value="09:00"></div><div class="field"><span>結束時間</span><input class="input" type="time" name="end_time" required value="17:00"></div></div>
-        <div class="form-actions"><button class="btn btn-primary" type="submit">新增時段</button></div>
-      </form>
-      <div class="availability-list" style="margin-top:12px">${list.length?list.map(a=>`<div class="availability-row"><span>${a.specific_date?esc(a.specific_date):weekdayNames[Number(a.weekday)]}</span><span>${shortTime(a.start_time)}–${shortTime(a.end_time)}</span><span><span class="tag ${a.active?'green':'gray'}">${a.active?'啟用':'停用'}</span></span><button class="btn btn-danger btn-small" data-delete-av="${a.id}">刪除</button></div>`).join(''):'<div class="empty">尚未設定可用時段</div>'}</div>
+  function bookingManagementView(type){
+    const resources=state.resources.filter(r=>r.type===type&&r.active!==false);
+    if(!state.calendarResourceId || !resources.some(r=>r.id===state.calendarResourceId)){
+      state.calendarResourceId=resources[0]?.id||null; state.calendarSelectedDate=null;
+    }
+    const resource=resources.find(r=>r.id===state.calendarResourceId)||null;
+    const selectedDate=state.calendarSelectedDate;
+    return `${top(type==='room'?'房間預約管理':'物品預約管理',type==='room'?'管理房間開放時段、每日狀況及個別小時':'管理物品開放時段、每日狀況及個別小時')}
+      <section class="panel booking-manager-panel">
+        <div class="panel-head"><div><h3>${type==='room'?'選擇房間':'選擇物品'}</h3><p>先選擇資源，再以日曆管理開放時段</p></div><div class="calendar-legend"><span><i class="legend-dot green"></i>空位</span><span><i class="legend-dot red"></i>已借用</span><span><i class="legend-dot gray"></i>不可借用</span></div></div>
+        <div class="resource-card-strip">${resources.length?resources.map(r=>`<button class="resource-select-card ${r.id===state.calendarResourceId?'active':''}" data-calendar-resource-card="${r.id}">${r.image_url?`<img src="${attr(r.image_url)}" alt="">`:`<span class="resource-card-placeholder">${type==='room'?'房':'物'}</span>`}<span><strong>${esc(r.name)}</strong><small>${type==='room'?`${Number(r.capacity||1)} 人`:esc(r.category||'未分類')}</small></span></button>`).join(''):'<div class="empty">尚未建立可用資源</div>'}</div>
+        ${resource?`<div class="booking-manager-grid"><div>${renderBorrowingCalendar(resource)}</div><div>${renderWeeklyAvailabilityManager(resource)}${selectedDate?renderHourlyDayManager(resource,selectedDate):'<div class="notice">點擊日曆日期，可查閱及管理當日每小時狀況。</div>'}</div></div>`:''}
       </section>`;
+  }
+
+  function renderWeeklyAvailabilityManager(resource){
+    const rules=state.availability.filter(a=>a.resource_id===resource.id&&a.active!==false&&!a.specific_date);
+    const names=['日','一','二','三','四','五','六'];
+    return `<div class="manager-subpanel"><div class="panel-head"><div><h3>批量新增開放時段</h3><p>可一次設定每星期多個日子及時間</p></div></div>
+      <form data-batch-av-form class="form-card"><input type="hidden" name="resource_id" value="${attr(resource.id)}">
+        <div class="weekday-checks">${[1,2,3,4,5,6,0].map(i=>`<label><input type="checkbox" name="weekday" value="${i}"> 星期${names[i]}</label>`).join('')}</div>
+        <div class="form-grid"><div class="field"><span>開始時間</span><input class="input" type="time" name="start_time" value="09:00" required></div><div class="field"><span>結束時間</span><input class="input" type="time" name="end_time" value="18:00" required></div></div>
+        <div class="form-actions"><button class="btn btn-primary" type="submit">套用至所選星期</button></div>
+      </form>
+      <div class="availability-list compact-list">${rules.length?rules.map(a=>`<div class="availability-row"><span>星期${names[Number(a.weekday)]}</span><span>${shortTime(a.start_time)}–${shortTime(a.end_time)}</span><button class="btn btn-danger btn-small" data-delete-av="${a.id}">刪除</button></div>`).join(''):'<div class="empty compact">尚未設定固定開放時段</div>'}</div></div>`;
+  }
+
+  function renderHourlyDayManager(resource,dateIso){
+    const rows=[];
+    for(let h=8;h<21;h++){
+      const start=`${String(h).padStart(2,'0')}:00`,end=`${String(h+1).padStart(2,'0')}:00`;
+      const info=hourStatus(resource,dateIso,start,end);
+      rows.push(`<div class="hour-admin-row"><span>${start}</span><span class="hour-status ${info.status}">${info.label}${info.detail?`<small>${esc(info.detail)}</small>`:''}</span><div class="row-actions"><button class="btn btn-small ${info.status==='green'?'btn-secondary':'btn-primary'}" data-time-override="${resource.id}|${dateIso}|${start}|${end}|true">設為可借用</button><button class="btn btn-small ${info.status==='gray'?'btn-secondary':'btn-danger'}" data-time-override="${resource.id}|${dateIso}|${start}|${end}|false">設為不可借用</button></div></div>`);
+    }
+    return `<div class="manager-subpanel day-hour-panel"><div class="panel-head"><div><h3>${esc(dateIso)}｜${esc(resource.name)}</h3><p>逐小時查閱已預約時段，並可覆寫個別時間的開放狀態</p></div></div><div class="hour-admin-table">${rows.join('')}</div></div>`;
+  }
+
+  function hourStatus(resource,dateIso,start,end){
+    const booking=state.bookings.find(b=>b.resource_id===resource.id&&bookingTouchesDate(b,dateIso)&&isOccupyingBooking(b)&&timeRangesOverlap(start,end,shortTime(b.start_time||'00:00'),shortTime(b.end_time||'23:59')));
+    if(booking)return {status:'red',label:'已借用',detail:`${shortTime(booking.start_time)}–${shortTime(booking.end_time)}`};
+    const open=isResourceHourOpen(resource,dateIso,start,end);
+    return open?{status:'green',label:'可借用'}:{status:'gray',label:'不可借用'};
+  }
+
+  function isResourceHourOpen(resource,dateIso,start,end){
+    if(getResourceBlock(resource.id,dateIso))return false;
+    const weekday=new Date(`${dateIso}T12:00:00`).getDay();
+    const baseOpen=state.availability.some(a=>a.resource_id===resource.id&&a.active!==false&&availabilityRuleMatches(a,dateIso,weekday)&&shortTime(a.start_time)<=start&&shortTime(a.end_time)>=end);
+    if(!baseOpen)return false;
+    const overrides=(state.timeOverrides||[]).filter(o=>o.resource_id===resource.id&&String(o.override_date)===dateIso&&shortTime(o.start_time)<end&&shortTime(o.end_time)>start).sort((a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||'')));
+    return overrides.length?overrides[overrides.length-1].is_available!==false:true;
   }
 
   function bookingPolicyView(){
@@ -402,7 +445,6 @@
   function calendarDayBaseAvailable(resource,dateIso){
     if(dateIso<todayIso() && !calendarBookingsForDate(resource.id,dateIso).length)return false;
     const rules=state.availability.filter(a=>a.resource_id===resource.id&&a.active!==false);
-    if(resource.type==='item' && !rules.length)return true;
     const weekday=new Date(`${dateIso}T12:00:00`).getDay();
     return rules.some(rule=>availabilityRuleMatches(rule,dateIso,weekday));
   }
@@ -527,6 +569,9 @@
     const imageInput=qs('[data-resource-form] input[name=image]'); if(imageInput) imageInput.onchange=previewResourceImage;
     qsa('[data-booking-status]').forEach(b=>b.onclick=()=>{const [id,status]=b.dataset.bookingStatus.split(':');updateBooking(id,status);});
     on('[data-calendar-resource]','change',e=>{state.calendarResourceId=e.target.value;state.calendarSelectedDate=null;state.editingCalendarBookingId=null;state.creatingCalendarBooking=false;render();});
+    qsa('[data-calendar-resource-card]').forEach(b=>b.onclick=()=>{state.calendarResourceId=b.dataset.calendarResourceCard;state.calendarSelectedDate=null;state.editingCalendarBookingId=null;state.creatingCalendarBooking=false;render();});
+    on('[data-batch-av-form]','submit',saveBatchAvailability);
+    qsa('[data-time-override]').forEach(b=>b.onclick=()=>saveTimeOverride(b.dataset.timeOverride));
     qsa('[data-calendar-month]').forEach(b=>b.onclick=()=>{state.calendarMonthOffset+=b.dataset.calendarMonth==='next'?1:-1;state.calendarSelectedDate=null;state.editingCalendarBookingId=null;state.creatingCalendarBooking=false;render();});
     qsa('[data-calendar-date]').forEach(b=>b.onclick=()=>{
       state.calendarSelectedDate=b.dataset.calendarDate;
@@ -693,6 +738,40 @@
       else{const r=await supabase.from('resources').delete().eq('id',id);if(r.error)throw r.error;await refreshAll();}
       state.editingResourceId=null;if(state.selectedResourceId===id)state.selectedResourceId=null;toast('資源已刪除','success');render();
     }catch(err){toast('未能刪除：'+errorMessage(err),'error');}
+  }
+
+  async function saveBatchAvailability(e){
+    e.preventDefault();
+    const fd=new FormData(e.currentTarget);
+    const resource_id=String(fd.get('resource_id')||state.calendarResourceId||'');
+    const weekdays=fd.getAll('weekday').map(Number).filter(n=>Number.isInteger(n)&&n>=0&&n<=6);
+    const start_time=String(fd.get('start_time')||''),end_time=String(fd.get('end_time')||'');
+    if(!resource_id||!weekdays.length)return toast('請至少選擇一個星期日子','error');
+    if(!start_time||!end_time||end_time<=start_time)return toast('請輸入有效開始及結束時間','error');
+    const rows=weekdays.map(weekday=>({resource_id,weekday,specific_date:null,date_from:null,date_to:null,start_time,end_time,active:true}));
+    try{
+      if(DEMO){rows.forEach(row=>state.availability.push({id:uid('av'),...row}));persistDemo();}
+      else{const r=await supabase.from('resource_availability').insert(rows);if(r.error)throw r.error;await refreshAll();}
+      toast(`已新增 ${rows.length} 個每星期開放時段`,'success');render();
+    }catch(err){toast(errorMessage(err),'error');}
+  }
+
+  async function saveTimeOverride(raw){
+    const [resource_id,override_date,start_time,end_time,availableText]=String(raw||'').split('|');
+    if(!resource_id||!override_date||!start_time||!end_time)return;
+    const is_available=availableText==='true';
+    const occupied=state.bookings.some(b=>b.resource_id===resource_id&&bookingTouchesDate(b,override_date)&&isOccupyingBooking(b)&&timeRangesOverlap(start_time,end_time,shortTime(b.start_time||'00:00'),shortTime(b.end_time||'23:59')));
+    if(occupied&&!is_available)return toast('此時段已有批准／完成的預約，不能設為不可借用。','error');
+    try{
+      if(DEMO){
+        state.timeOverrides=state.timeOverrides.filter(o=>!(o.resource_id===resource_id&&String(o.override_date)===override_date&&shortTime(o.start_time)===start_time&&shortTime(o.end_time)===end_time));
+        state.timeOverrides.push({id:uid('ov'),resource_id,override_date,start_time,end_time,is_available,created_at:new Date().toISOString()});persistDemo();
+      }else{
+        const r=await supabase.rpc('admin_set_resource_time_override',{p_resource_id:resource_id,p_override_date:override_date,p_start_time:start_time,p_end_time:end_time,p_is_available:is_available});
+        if(r.error)throw r.error;await refreshAll();
+      }
+      toast(is_available?'已設為可借用':'已設為不可借用','success');render();
+    }catch(err){toast(errorMessage(err),'error');}
   }
 
   async function saveAvailability(e){
@@ -875,7 +954,7 @@ ${resourceName(b.resource_id)}｜${b.booking_date}`))return;
   function addDays(iso,days){const d=new Date(`${iso}T12:00:00`);d.setDate(d.getDate()+Number(days||0));return toIsoDate(d);}
   function todayIso(){return toIsoDate(new Date());}
   function statusLabel(s){return ({pending:'待審批',approved:'已批准',rejected:'已拒絕',completed:'已完成',cancelled:'已取消'})[s]||s||'—';}
-  function errorMessage(err){if(!err)return'未知錯誤';if(typeof err==='string')return err;const m=err.message||err.error_description||err.details||'操作失敗';if(/admin_set_organization_portal_password/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v9 機構登入及資料隔離 SQL。';if(/RESOURCE_DATE_BLOCKED/i.test(m))return'所選日期已設為不可借用，請先解除封鎖。';if(/admin_upsert_booking_record|get_public_resource_busy_periods|update_booking_group_status/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v7 日曆新增／修改預約 SQL。';if(/resource_blocks|admin_update_booking_record|admin_delete_booking_record/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v6 借用狀況日曆 SQL。';if(/row-level security|permission denied/i.test(m))return'資料庫權限不足。請確認登入帳戶在 profiles 表中的 role 為 admin，並執行管理權限 SQL。';if(/BOOKING_WINDOW_CLOSED/i.test(m))return'所選日期尚未開放預約，請選擇已開放日期。';if(/booking_policy|get_booking_policy/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v10.5 開放申請期限／物品分類 SQL。';if(/TELEGRAM_NOT_CONFIGURED/i.test(m))return'尚未設定 Telegram Bot Token／Chat ID。';if(/BOT_TOKEN_REQUIRED|CHAT_ID_REQUIRED/i.test(m))return'請輸入有效的 Bot Token 及 Chat ID。';if(/admin_set_telegram_notification|admin_get_telegram_notification_status|admin_test_telegram_notification/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v10.4 Telegram 通知 SQL。';if(/duplicate|unique/i.test(m))return'名稱已存在，請使用另一個名稱。';return m;}
+  function errorMessage(err){if(!err)return'未知錯誤';if(typeof err==='string')return err;const m=err.message||err.error_description||err.details||'操作失敗';if(/admin_set_organization_portal_password/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v9 機構登入及資料隔離 SQL。';if(/RESOURCE_DATE_BLOCKED|RESOURCE_TIME_BLOCKED/i.test(m))return'所選日期或時段已設為不可借用，請先調整開放設定。';if(/TIME_HAS_BOOKING/i.test(m))return'此時段已有批准／完成的預約，不能設為不可借用。';if(/admin_upsert_booking_record|get_public_resource_busy_periods|update_booking_group_status/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v7 日曆新增／修改預約 SQL。';if(/resource_blocks|admin_update_booking_record|admin_delete_booking_record/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v6 借用狀況日曆 SQL。';if(/row-level security|permission denied/i.test(m))return'資料庫權限不足。請確認登入帳戶在 profiles 表中的 role 為 admin，並執行管理權限 SQL。';if(/BOOKING_WINDOW_CLOSED/i.test(m))return'所選日期尚未開放預約，請選擇已開放日期。';if(/booking_policy|get_booking_policy/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v10.5 開放申請期限／物品分類 SQL。';if(/TELEGRAM_NOT_CONFIGURED/i.test(m))return'尚未設定 Telegram Bot Token／Chat ID。';if(/BOT_TOKEN_REQUIRED|CHAT_ID_REQUIRED/i.test(m))return'請輸入有效的 Bot Token 及 Chat ID。';if(/admin_set_telegram_notification|admin_get_telegram_notification_status|admin_test_telegram_notification/i.test(m)&&/does not exist|could not find|schema cache/i.test(m))return'Supabase 尚未套用 v10.4 Telegram 通知 SQL。';if(/duplicate|unique/i.test(m))return'名稱已存在，請使用另一個名稱。';return m;}
   function toast(msg,type=''){const d=document.createElement('div');d.className=`toast ${type}`;d.textContent=msg;toastRoot.appendChild(d);setTimeout(()=>d.remove(),3300);}
   function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
   function attr(s){return esc(s).replace(/"/g,'&quot;');}

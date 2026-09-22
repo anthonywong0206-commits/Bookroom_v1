@@ -53,6 +53,7 @@
     confirmation: null,
     organizations: [],
     availability: [],
+    timeOverrides: [],
     publicBookings: [],
     busyPeriods: [],
     resourceBlocks: [],
@@ -222,14 +223,14 @@
     }
     state.organizations = (Array.isArray(data.organizations) ? data.organizations : []).filter(org => org.active !== false);
     if (!state.portalAuthenticated) {
-      state._allResources = []; state.availability = []; state._allBookings = []; state.resourceBlocks = []; state.publicBookings = []; state.busyPeriods = [];
+      state._allResources = []; state.availability = []; state.timeOverrides = []; state._allBookings = []; state.resourceBlocks = []; state.publicBookings = []; state.busyPeriods = [];
       state.purposeOptions = Array.isArray(data.purposeOptions) ? data.purposeOptions : demoSeed().purposeOptions;
       return;
     }
     const org = state.organizations.find(item => item.id === state.portalOrgId);
     if (!org || String(org.access_password || '1234') !== String(state.portalPassword || '')) {
       clearPortalSession();
-      state._allResources = []; state.availability = []; state._allBookings = []; state.resourceBlocks = []; state.publicBookings = []; state.busyPeriods = [];
+      state._allResources = []; state.availability = []; state.timeOverrides = []; state._allBookings = []; state.resourceBlocks = []; state.publicBookings = []; state.busyPeriods = [];
       return;
     }
     state.portalOrgName = org.name;
@@ -238,6 +239,7 @@
     const ids = new Set(orgResources.map(resource => resource.id));
     state._allResources = orgResources;
     state.availability = (Array.isArray(data.availability) ? data.availability : []).filter(row => ids.has(row.resource_id));
+    state.timeOverrides = (Array.isArray(data.timeOverrides) ? data.timeOverrides : []).filter(row => ids.has(row.resource_id));
     state._allBookings = (Array.isArray(data.bookings) ? data.bookings : []).filter(row => ids.has(row.resource_id));
     state.resourceBlocks = (Array.isArray(data.resourceBlocks) ? data.resourceBlocks : []).filter(row => ids.has(row.resource_id));
     state.purposeOptions = Array.isArray(data.purposeOptions) ? data.purposeOptions : demoSeed().purposeOptions;
@@ -272,6 +274,7 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'organizations' }, () => refreshFromSource(true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'resources' }, () => refreshFromSource(true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'resource_availability' }, () => refreshFromSource(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'resource_time_overrides' }, () => refreshFromSource(true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'resource_blocks' }, () => refreshFromSource(true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => refreshFromSource(true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'purpose_options' }, () => refreshFromSource(true))
@@ -286,7 +289,7 @@
     const policyRes = await client.rpc('get_booking_policy');
     if (!policyRes.error && policyRes.data) state.bookingPolicy = policyRes.data;
     if (!state.portalAuthenticated) {
-      state._allResources = []; state.availability = []; state.resourceBlocks = []; state.publicBookings = []; state.busyPeriods = []; state.purposeOptions = [];
+      state._allResources = []; state.availability = []; state.timeOverrides = []; state.resourceBlocks = []; state.publicBookings = []; state.busyPeriods = []; state.purposeOptions = [];
       return;
     }
     const result = await client.rpc('get_organization_portal_data', {
@@ -301,6 +304,7 @@
     state.portalOrgName = payload.organization?.name || state.organizations.find(o => o.id === state.portalOrgId)?.name || '';
     state._allResources = payload.resources || [];
     state.availability = payload.availability || [];
+    state.timeOverrides = payload.time_overrides || [];
     state.resourceBlocks = payload.resource_blocks || [];
     state.purposeOptions = payload.purpose_options || [];
     state.publicBookings = (payload.public_bookings || []).map(row => ({
@@ -409,7 +413,7 @@
     if (/INVALID_ORGANIZATION_PASSWORD/i.test(message)) return '機構密碼不正確';
     if (/ORGANIZATION_NOT_AVAILABLE/i.test(message)) return '此機構目前未開放使用';
     if (/ORG_RESOURCE_MISMATCH/i.test(message)) return '所選資源不屬於目前登入機構';
-    if (/RESOURCE_DATE_BLOCKED/i.test(message)) return '所選日期已由管理員設為不可借用，請重新選擇日期';
+    if (/RESOURCE_DATE_BLOCKED|RESOURCE_TIME_BLOCKED/i.test(message)) return '所選日期或時段已由管理員設為不可借用，請重新選擇。';
     if (/get_public_resource_busy_periods|admin_upsert_booking_record/i.test(message) && /does not exist|schema cache|could not find/i.test(message)) return 'Supabase 尚未套用 v7 預約流程／日曆管理 SQL';
     if (/resource_blocks/i.test(message) && /does not exist|schema cache|could not find/i.test(message)) return 'Supabase 尚未套用 v6 借用狀況日曆 SQL';
     if (/get_public_resource_bookings/i.test(message)) return 'Supabase 尚未套用前後台同步 SQL';
@@ -828,43 +832,34 @@
   function publicCalendarDayBaseAvailable(resource, dateIso) {
     if (dateIso < todayIso() && !publicBookingsForResourceDate(resource.id, dateIso).length) return false;
     const rules = (state.availability || []).filter(rule => rule.resource_id === resource.id && rule.active !== false);
-    if (resource.type === 'item' && !rules.length) return true;
     const weekday = new Date(`${dateIso}T12:00:00`).getDay();
     return rules.some(rule => availabilityMatchesDate(rule, dateIso, weekday));
   }
 
   function renderPublicDateStatus(resource, dateIso) {
-    const bookings = publicBookingsForResourceDate(resource.id, dateIso);
-    const block = getPublicResourceBlock(resource.id, dateIso);
-    const available = publicCalendarDayBaseAvailable(resource, dateIso);
-    const status = bookings.length ? 'red' : (block || !available ? 'gray' : 'green');
-    const heading = bookings.length ? '已借用' : (block ? '不可借用' : (!available ? '未開放' : '空位'));
-    let details = '';
-    if (bookings.length) {
-      if (resource.type === 'room') {
-        const periods = (state.busyPeriods || []).filter(period => period.resourceId === resource.id && dateIso >= period.date && dateIso <= (period.returnDate || period.date));
-        const unique = [];
-        const seen = new Set();
-        periods.forEach(period => {
-          const label = period.startTime && period.endTime ? `${period.startTime}–${period.endTime}` : '當日已有預約';
-          if (!seen.has(label)) { seen.add(label); unique.push(label); }
-        });
-        details = unique.length ? `<div class="query-status-detail-list">${unique.map(label => `<span>${escapeHtml(label)}</span>`).join('')}</div>` : '<div class="helper">當日已有房間預約</div>';
-      } else {
-        const rows = bookings.map(booking => {
-          const range = booking.returnDate && booking.returnDate !== booking.date ? `${formatDate(booking.date)} 至 ${formatDate(booking.returnDate)}` : formatDate(booking.date);
-          return `<span>${range}${Number(booking.quantity || 1) > 1 ? `・數量 ${Number(booking.quantity)}` : ''}</span>`;
-        });
-        details = `<div class="query-status-detail-list">${rows.join('')}</div>`;
-      }
-    } else if (block) {
-      details = '<div class="helper">此日期已由管理員設定為不可借用。</div>';
-    } else if (!available) {
-      details = '<div class="helper">此日期未設定開放借用。</div>';
-    } else {
-      details = '<div class="helper">目前沒有已批准的借用紀錄。</div>';
+    const rows=[];
+    for(let h=8;h<21;h++){
+      const start=`${String(h).padStart(2,'0')}:00`,end=`${String(h+1).padStart(2,'0')}:00`;
+      const status=publicHourStatus(resource,dateIso,start,end);
+      rows.push(`<div class="public-hour-row ${status.status}"><span class="public-hour-time">${start}</span><span class="public-hour-bar">${status.label}${status.detail?`<small>${escapeHtml(status.detail)}</small>`:''}</span></div>`);
     }
-    return `<div class="query-date-status ${status}"><div><span class="query-date-label">${formatDate(dateIso)}</span><strong>${heading}</strong></div>${details}</div>`;
+    return `<div class="query-hourly-card"><div class="query-date-status-head"><div><span class="query-date-label">${formatDate(dateIso)}</span><strong>${escapeHtml(resource.name)}</strong></div><div class="query-calendar-legend"><span><i class="query-legend-dot green"></i>可借用</span><span><i class="query-legend-dot red"></i>已借用</span><span><i class="query-legend-dot gray"></i>不可借用</span></div></div><div class="public-hour-grid">${rows.join('')}</div><div class="helper">時間表以每小時顯示；實際可選開始時間仍會按房間預約時長及剩餘容量計算。</div></div>`;
+  }
+
+  function publicHourStatus(resource,dateIso,start,end){
+    const booking=(state.busyPeriods||[]).find(p=>p.resourceId===resource.id&&dateIso>=p.date&&dateIso<=(p.returnDate||p.date)&&timeRangesOverlap(start,end,p.startTime||'00:00',p.endTime||'23:59'));
+    if(booking)return {status:'red',label:'已借用',detail:booking.startTime&&booking.endTime?`${booking.startTime}–${booking.endTime}`:''};
+    return isPublicResourceHourOpen(resource,dateIso,start,end)?{status:'green',label:'可借用'}:{status:'gray',label:'不可借用'};
+  }
+
+  function isPublicResourceHourOpen(resource,dateIso,start,end){
+    if(!bookingDateOpen(dateIso)||isResourceBlocked(resource.id,dateIso))return false;
+    const weekday=new Date(`${dateIso}T12:00:00`).getDay();
+    const rules=(state.availability||[]).filter(a=>a.resource_id===resource.id&&a.active!==false&&availabilityMatchesDate(a,dateIso,weekday));
+    const baseOpen=rules.some(a=>shortTime(a.start_time)<=start&&shortTime(a.end_time)>=end);
+    if(!baseOpen)return false;
+    const overrides=(state.timeOverrides||[]).filter(o=>o.resource_id===resource.id&&String(o.override_date)===dateIso&&shortTime(o.start_time)<end&&shortTime(o.end_time)>start).sort((a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||'')));
+    return overrides.length?overrides[overrides.length-1].is_available!==false:true;
   }
 
   function renderMyPage() {
@@ -1563,17 +1558,20 @@
 
   function getRoomStartTimes(roomId, dateIso, durationMinutes) {
     if (!durationMinutes || durationMinutes < 30) return [];
-    const windows = getRoomAvailabilityWindows(roomId,dateIso);
+    const room=rooms.find(r=>r.id===roomId) || (state._allResources||[]).find(r=>r.id===roomId);
+    if(!room)return [];
     const busy = busyPeriodsForRoom(roomId,dateIso);
     const options = new Set();
-    for (const window of windows) {
-      const startMin = timeToMinutes(window.start);
-      const endMin = timeToMinutes(window.end);
-      for (let cursor=startMin; cursor+durationMinutes<=endMin; cursor+=30) {
-        const start=minutesToTime(cursor), end=minutesToTime(cursor+durationMinutes);
-        const clashes = busy.some(period => timeRangesOverlap(start,end,period.startTime,period.endTime));
-        if (!clashes) options.add(start);
+    for(let cursor=0;cursor+durationMinutes<=24*60;cursor+=30){
+      const start=minutesToTime(cursor),end=minutesToTime(cursor+durationMinutes);
+      const fullyOpen=[];
+      for(let part=cursor;part<cursor+durationMinutes;part+=30){
+        const ps=minutesToTime(part),pe=minutesToTime(part+30);
+        fullyOpen.push(isPublicResourceHourOpen(room,dateIso,ps,pe));
       }
+      if(!fullyOpen.length||fullyOpen.some(v=>!v))continue;
+      const clashes = busy.some(period => timeRangesOverlap(start,end,period.startTime,period.endTime));
+      if (!clashes) options.add(start);
     }
     return [...options].sort();
   }

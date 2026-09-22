@@ -888,3 +888,8 @@ img { max-width: 100%; display: block; }
 .booking-open-range{font-size:13px;margin-top:3px}
 .booking-open-notice small{display:block;margin-top:4px;opacity:.78;line-height:1.45}
 .portal-gate .booking-open-notice{text-align:left;margin:14px 0}
+
+/* v10.7 hourly availability timetable */
+.query-hourly-card{border:1px solid var(--line);border-radius:20px;background:#fff;padding:16px;margin-top:12px}
+.query-date-status-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px}.query-date-status-head strong{display:block;margin-top:3px}.public-hour-grid{display:grid;gap:6px}.public-hour-row{display:grid;grid-template-columns:72px 1fr;align-items:stretch;gap:8px}.public-hour-time{font-weight:800;color:var(--text);padding:9px 4px}.public-hour-bar{border-radius:11px;padding:9px 12px;font-weight:800;display:flex;gap:8px;align-items:center;min-height:38px}.public-hour-bar small{font-weight:600;opacity:.72}.public-hour-row.green .public-hour-bar{background:#e8f8ef;color:#1f7449}.public-hour-row.red .public-hour-bar{background:#ffeaea;color:#a33d3d}.public-hour-row.gray .public-hour-bar{background:#eef1f5;color:#6d7887}
+@media(max-width:640px){.query-date-status-head{display:grid}.public-hour-row{grid-template-columns:60px 1fr}.public-hour-time{font-size:.85rem}}

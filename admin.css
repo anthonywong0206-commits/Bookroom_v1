@@ -26,3 +26,19 @@
 .policy-preview{margin-top:14px;padding:16px 18px;border-radius:14px;background:#eef7ff;border:1px solid #cfe6ff;line-height:1.7}
 .policy-preview strong{color:#155aa8}
 .policy-help{line-height:1.65}
+
+/* v10.7 booking management redesign */
+.resource-settings-grid{align-items:start}
+.booking-manager-panel{padding-bottom:24px}
+.resource-card-strip{display:flex;gap:10px;overflow:auto;padding:2px 2px 14px;margin-bottom:8px}
+.resource-select-card{min-width:170px;border:1px solid var(--line);background:#fff;border-radius:16px;padding:10px;display:flex;align-items:center;gap:10px;text-align:left;color:var(--text);box-shadow:0 4px 14px rgba(34,73,126,.05)}
+.resource-select-card.active{border-color:#7eb2f6;box-shadow:0 0 0 3px rgba(31,111,235,.12);background:#f5f9ff}
+.resource-select-card img,.resource-card-placeholder{width:48px;height:48px;border-radius:12px;object-fit:cover;display:grid;place-items:center;background:#edf4fd;color:var(--primary-dark);font-weight:900}
+.resource-select-card span{display:grid;gap:2px}.resource-select-card small{color:var(--muted);font-size:.75rem}
+.booking-manager-grid{display:grid;grid-template-columns:minmax(480px,1.05fr) minmax(420px,.95fr);gap:18px;align-items:start}
+.manager-subpanel{border:1px solid var(--line);background:#fbfdff;border-radius:18px;padding:16px}.manager-subpanel+.manager-subpanel{margin-top:16px}
+.weekday-checks{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}.weekday-checks label{display:flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px 10px;font-size:.82rem;font-weight:700}
+.compact-list .availability-row{grid-template-columns:1fr 1fr auto}
+.hour-admin-table{display:grid;gap:7px}.hour-admin-row{display:grid;grid-template-columns:70px minmax(150px,1fr) auto;gap:10px;align-items:center;padding:9px 10px;border:1px solid var(--line);border-radius:12px;background:#fff}
+.hour-admin-row>span:first-child{font-weight:800}.hour-status{display:flex;align-items:center;gap:8px;font-weight:800;border-radius:10px;padding:8px 10px}.hour-status small{font-weight:600;opacity:.75}.hour-status.green{background:#e9f8ef;color:#217048}.hour-status.red{background:#fff0f0;color:#a33d3d}.hour-status.gray{background:#eef1f5;color:#687589}
+@media(max-width:1280px){.booking-manager-grid{grid-template-columns:1fr}.resource-select-card{min-width:150px}}
