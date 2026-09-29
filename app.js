@@ -850,14 +850,33 @@
   }
 
   function renderPublicStatusDay(resource, dateIso, dayNo) {
-    const bookings = publicBookingsForResourceDate(resource.id, dateIso);
-    const occupied = bookings.length > 0;
-    const block = getPublicResourceBlock(resource.id, dateIso);
-    const baseAvailable = publicCalendarDayBaseAvailable(resource, dateIso);
-    const status = occupied ? 'red' : (block || !baseAvailable ? 'gray' : 'green');
-    const label = occupied ? '已借用' : (block ? '不可借用' : (!baseAvailable ? '未開放' : '空位'));
+    let info;
+    if(resource.type==='room') info=publicRoomDayStatusSummary(resource,dateIso);
+    else{
+      const bookings=publicBookingsForResourceDate(resource.id,dateIso);
+      const occupied=bookings.length>0;
+      const block=getPublicResourceBlock(resource.id,dateIso);
+      const baseAvailable=publicCalendarDayBaseAvailable(resource,dateIso);
+      info={status:occupied?'red':(block||!baseAvailable?'gray':'green'),label:occupied?'已借用':(block?'不可借用':(!baseAvailable?'未開放':'空位'))};
+    }
     const selected = state.querySelectedDate === dateIso ? ' selected' : '';
-    return `<button class="query-status-day ${status}${selected}" data-query-calendar-date="${dateIso}"><span class="query-day-number">${dayNo}</span><span class="query-day-state">${label}</span></button>`;
+    return `<button class="query-status-day ${info.status}${selected}" data-query-calendar-date="${dateIso}"><span class="query-day-number">${dayNo}</span><span class="query-day-state">${info.label}</span></button>`;
+  }
+
+  function publicRoomDayStatusSummary(resource,dateIso){
+    if(getPublicResourceBlock(resource.id,dateIso))return {status:'gray',label:'不可借用',available:0,total:0,booked:0};
+    let available=0,booked=0;
+    for(let h=8;h<21;h++){
+      const start=`${String(h).padStart(2,'0')}:00`,end=`${String(h+1).padStart(2,'0')}:00`;
+      const st=publicHourStatus(resource,dateIso,start,end).status;
+      if(st==='green')available++;
+      else if(st==='red')booked++;
+    }
+    const total=available+booked;
+    if(total===0)return {status:'gray',label:'不可借用',available,booked,total};
+    if(available===0)return {status:'red',label:'已滿',available,booked,total};
+    if(available/total>0.5)return {status:'green',label:'可預約',available,booked,total};
+    return {status:'yellow',label:'少量空位',available,booked,total};
   }
 
   function publicBookingsForResourceDate(resourceId, dateIso) {

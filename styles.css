@@ -779,6 +779,7 @@ img { max-width: 100%; display: block; }
 .query-calendar-legend span{display:flex;align-items:center;gap:6px;}
 .query-legend-dot{width:13px;height:13px;border-radius:4px;display:inline-block;}
 .query-legend-dot.green{background:#dff5e8;border:1px solid #73c994;}
+.query-legend-dot.yellow{background:#fff4cc;border:1px solid #e2b93f;}
 .query-legend-dot.red{background:#ffe1e1;border:1px solid #df7777;}
 .query-legend-dot.gray{background:#e8ebf0;border:1px solid #b5bdc8;}
 .query-status-calendar{border:1px solid var(--line);border-radius:20px;overflow:hidden;background:#fff;}
@@ -790,6 +791,7 @@ img { max-width: 100%; display: block; }
 .query-status-day{min-height:68px;border:0;border-right:1px solid #e6edf7;border-bottom:1px solid #e6edf7;padding:7px;display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;text-align:left;position:relative;}
 .query-status-day:nth-child(7n){border-right:0;}
 .query-status-day.green{background:#effaf3;color:#236b47;}
+.query-status-day.yellow{background:#fff8df;color:#8a6500;}
 .query-status-day.red{background:#fff0f0;color:#a53f3f;}
 .query-status-day.gray{background:#f0f2f5;color:#7c8795;}
 .query-status-day.selected{box-shadow:inset 0 0 0 3px var(--primary);z-index:1;}

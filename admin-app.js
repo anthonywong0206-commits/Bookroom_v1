@@ -215,7 +215,7 @@
     const selectedDate=state.calendarSelectedDate;
     return `${top(type==='room'?'房間預約管理':'物品預約管理',type==='room'?'管理房間開放時段、每日狀況及個別小時':'管理物品開放時段、每日狀況及個別小時')}
       <section class="panel booking-manager-panel">
-        <div class="panel-head"><div><h3>${type==='room'?'選擇房間':'選擇物品'}</h3><p>先選擇資源，再以日曆管理開放時段</p></div><div class="calendar-legend"><span><i class="legend-dot green"></i>空位</span><span><i class="legend-dot red"></i>已借用</span><span><i class="legend-dot gray"></i>不可借用</span></div></div>
+        <div class="panel-head"><div><h3>${type==='room'?'選擇房間':'選擇物品'}</h3><p>先選擇資源，再以日曆管理開放時段</p></div><div class="calendar-legend"><span><i class="legend-dot green"></i>可預約</span><span><i class="legend-dot yellow"></i>少量空位</span><span><i class="legend-dot red"></i>已滿</span><span><i class="legend-dot gray"></i>不可借用</span></div></div>
         <div class="resource-card-strip">${resources.length?resources.map(r=>`<button class="resource-select-card ${r.id===state.calendarResourceId?'active':''}" data-calendar-resource-card="${r.id}">${r.image_url?`<img src="${attr(r.image_url)}" alt="">`:`<span class="resource-card-placeholder">${type==='room'?'房':'物'}</span>`}<span><strong>${esc(r.name)}</strong><small>${type==='room'?`${Number(r.capacity||1)} 人`:esc(r.category||'未分類')}</small></span></button>`).join(''):'<div class="empty">尚未建立可用資源</div>'}</div>
         ${resource?`<div class="booking-manager-grid"><div>${renderBorrowingCalendar(resource)}</div><div>${renderWeeklyAvailabilityManager(resource)}${selectedDate?renderHourlyDayManager(resource,selectedDate):'<div class="notice">點擊日曆日期，可查閱及管理當日每小時狀況。</div>'}</div></div>`:''}
       </section>`;
@@ -240,7 +240,8 @@
       const info=hourStatus(resource,dateIso,start,end);
       rows.push(`<div class="hour-admin-row"><span>${start}</span><span class="hour-status ${info.status}">${info.label}${info.detail?`<small>${esc(info.detail)}</small>`:''}</span><div class="row-actions"><button class="btn btn-small ${info.status==='green'?'btn-secondary':'btn-primary'}" data-time-override="${resource.id}|${dateIso}|${start}|${end}|true">設為可借用</button><button class="btn btn-small ${info.status==='gray'?'btn-secondary':'btn-danger'}" data-time-override="${resource.id}|${dateIso}|${start}|${end}|false">設為不可借用</button></div></div>`);
     }
-    return `<div class="manager-subpanel day-hour-panel"><div class="panel-head"><div><h3>${esc(dateIso)}｜${esc(resource.name)}</h3><p>逐小時查閱已預約時段，並可覆寫個別時間的開放狀態</p></div></div><div class="hour-admin-table">${rows.join('')}</div></div>`;
+    const daySummary=resource.type==='room'?roomDayStatusSummary(resource,dateIso):null;
+    return `<div class="manager-subpanel day-hour-panel"><div class="panel-head"><div><h3>${esc(dateIso)}｜${esc(resource.name)}</h3><p>逐小時查閱已預約時段，並可覆寫個別時間的開放狀態</p></div></div>${resource.type==='room'?`<div class="day-status-control"><div><span class="day-status-badge ${daySummary.status}">${daySummary.label}</span><small>${daySummary.available}/${daySummary.total||0} 個開放時段仍可預約</small></div><div class="row-actions"><button class="btn btn-small btn-primary" data-day-status="${resource.id}|${dateIso}|true">整日設為可預約</button><button class="btn btn-small btn-danger" data-day-status="${resource.id}|${dateIso}|false">整日設為不可借用</button></div></div>`:''}<div class="hour-admin-table">${rows.join('')}</div></div>`;
   }
 
   function hourStatus(resource,dateIso,start,end){
@@ -391,7 +392,7 @@
       <section class="panel borrowing-panel">
         <div class="borrowing-toolbar">
           <div class="field"><span>房間／物品</span><select class="select" data-calendar-resource>${state.resources.map(r=>`<option value="${r.id}" ${r.id===state.calendarResourceId?'selected':''}>${esc(r.type==='room'?'房間':'物品')}｜${esc(r.name)}${r.active?'':'（停用）'}</option>`).join('')}</select></div>
-          <div class="calendar-legend"><span><i class="legend-dot green"></i>空位</span><span><i class="legend-dot red"></i>已借用</span><span><i class="legend-dot gray"></i>不可借用</span></div>
+          <div class="calendar-legend"><span><i class="legend-dot green"></i>可預約</span><span><i class="legend-dot yellow"></i>少量空位</span><span><i class="legend-dot red"></i>已滿</span><span><i class="legend-dot gray"></i>不可借用</span></div>
         </div>
         ${resource?renderBorrowingCalendar(resource):'<div class="empty">尚未建立房間或物品</div>'}
       </section>
@@ -426,14 +427,33 @@
 
   function renderBorrowingDay(resource,dateIso,dayNo){
     const bookings=calendarBookingsForDate(resource.id,dateIso);
-    const occupied=bookings.some(isOccupyingBooking);
     const pending=bookings.some(b=>b.status==='pending');
-    const block=getResourceBlock(resource.id,dateIso);
-    const baseAvailable=calendarDayBaseAvailable(resource,dateIso);
-    const status=occupied?'red':(block||!baseAvailable?'gray':'green');
     const selected=state.calendarSelectedDate===dateIso?' selected':'';
-    const label=occupied?'已借用':(block?'不可借用':(!baseAvailable?'未開放':'空位'));
-    return `<button class="admin-day ${status}${selected}" data-calendar-date="${dateIso}"><span class="day-number">${dayNo}</span><span class="day-state">${label}</span>${pending&&!occupied?'<span class="pending-dot" title="有待審批申請"></span>':''}</button>`;
+    let info;
+    if(resource.type==='room') info=roomDayStatusSummary(resource,dateIso);
+    else{
+      const occupied=bookings.some(isOccupyingBooking);
+      const block=getResourceBlock(resource.id,dateIso);
+      const baseAvailable=calendarDayBaseAvailable(resource,dateIso);
+      info={status:occupied?'red':(block||!baseAvailable?'gray':'green'),label:occupied?'已借用':(block?'不可借用':(!baseAvailable?'未開放':'空位'))};
+    }
+    return `<button class="admin-day ${info.status}${selected}" data-calendar-date="${dateIso}"><span class="day-number">${dayNo}</span><span class="day-state">${info.label}</span>${pending?'<span class="pending-dot" title="有待審批申請"></span>':''}</button>`;
+  }
+
+  function roomDayStatusSummary(resource,dateIso){
+    if(getResourceBlock(resource.id,dateIso))return {status:'gray',label:'不可借用',available:0,total:0,booked:0};
+    let available=0,booked=0;
+    for(let h=8;h<21;h++){
+      const start=`${String(h).padStart(2,'0')}:00`,end=`${String(h+1).padStart(2,'0')}:00`;
+      const st=hourStatus(resource,dateIso,start,end).status;
+      if(st==='green')available++;
+      else if(st==='red')booked++;
+    }
+    const total=available+booked;
+    if(total===0)return {status:'gray',label:'不可借用',available,booked,total};
+    if(available===0)return {status:'red',label:'已滿',available,booked,total};
+    if(available/total>0.5)return {status:'green',label:'可預約',available,booked,total};
+    return {status:'yellow',label:'少量空位',available,booked,total};
   }
 
   function calendarBookingsForDate(resourceId,dateIso){
@@ -572,6 +592,7 @@
     qsa('[data-calendar-resource-card]').forEach(b=>b.onclick=()=>{state.calendarResourceId=b.dataset.calendarResourceCard;state.calendarSelectedDate=null;state.editingCalendarBookingId=null;state.creatingCalendarBooking=false;render();});
     on('[data-batch-av-form]','submit',saveBatchAvailability);
     qsa('[data-time-override]').forEach(b=>b.onclick=()=>saveTimeOverride(b.dataset.timeOverride));
+    qsa('[data-day-status]').forEach(b=>b.onclick=()=>setCalendarDayStatus(b.dataset.dayStatus));
     qsa('[data-calendar-month]').forEach(b=>b.onclick=()=>{state.calendarMonthOffset+=b.dataset.calendarMonth==='next'?1:-1;state.calendarSelectedDate=null;state.editingCalendarBookingId=null;state.creatingCalendarBooking=false;render();});
     qsa('[data-calendar-date]').forEach(b=>b.onclick=()=>{
       state.calendarSelectedDate=b.dataset.calendarDate;
@@ -774,6 +795,30 @@
     }catch(err){toast(errorMessage(err),'error');}
   }
 
+  async function setCalendarDayStatus(raw){
+    const [resource_id,dateIso,availableText]=String(raw||'').split('|');
+    if(!resource_id||!dateIso)return;
+    const is_available=availableText==='true';
+    try{
+      if(DEMO){
+        if(is_available){
+          state.resourceBlocks=state.resourceBlocks.filter(b=>!(b.resource_id===resource_id&&String(b.block_date)===dateIso));
+          const resource=state.resources.find(r=>r.id===resource_id);
+          if(resource&&!calendarDayBaseAvailable(resource,dateIso)) state.availability.push({id:uid('av'),resource_id,specific_date:dateIso,weekday:null,date_from:null,date_to:null,start_time:'09:00',end_time:'18:00',active:true});
+        }else{
+          state.resourceBlocks=state.resourceBlocks.filter(b=>!(b.resource_id===resource_id&&String(b.block_date)===dateIso));
+          state.resourceBlocks.push({id:uid('block'),resource_id,block_date:dateIso,note:'管理員整日設為不可借用',created_at:new Date().toISOString()});
+        }
+        persistDemo();
+      }else{
+        const r=await supabase.rpc('admin_set_resource_day_status',{p_resource_id:resource_id,p_date:dateIso,p_is_available:is_available});
+        if(r.error)throw r.error;
+        await refreshAll();
+      }
+      toast(is_available?'此日期已設為可預約':'此日期已設為不可借用；既有預約會保留','success');render();
+    }catch(err){toast('未能更新日期狀態：'+errorMessage(err),'error');}
+  }
+
   async function saveAvailability(e){
     e.preventDefault(); if(!state.selectedResourceId)return; const fd=new FormData(e.currentTarget);const mode=String(fd.get('mode'));const start_time=String(fd.get('start_time'));const end_time=String(fd.get('end_time'));
     if(!start_time||!end_time||end_time<=start_time)return toast('請輸入有效開始及結束時間','error');
@@ -863,22 +908,12 @@ ${resourceName(b.resource_id)}｜${b.booking_date}`))return;
 
   async function blockCalendarDate(dateIso){
     const resourceId=state.calendarResourceId;if(!resourceId||!dateIso)return;
-    if(calendarBookingsForDate(resourceId,dateIso).some(isOccupyingBooking))return toast('此日期已有批准／完成的借用紀錄，不能設為不可借用。','error');
-    if(getResourceBlock(resourceId,dateIso))return;
-    try{
-      const payload={resource_id:resourceId,block_date:dateIso,note:'管理員設定不可借用'};
-      if(DEMO){state.resourceBlocks.push({id:uid('block'),...payload,created_at:new Date().toISOString()});persistDemo();}
-      else{const r=await supabase.from('resource_blocks').insert(payload);if(r.error)throw r.error;await refreshAll();}
-      toast('此日期已設為不可借用','success');render();
-    }catch(err){toast('未能封鎖日期：'+errorMessage(err),'error');}
+    return setCalendarDayStatus(`${resourceId}|${dateIso}|false`);
   }
 
   async function unblockCalendarDate(id){
-    if(!id)return;try{
-      if(DEMO){state.resourceBlocks=state.resourceBlocks.filter(x=>x.id!==id);persistDemo();}
-      else{const r=await supabase.from('resource_blocks').delete().eq('id',id);if(r.error)throw r.error;await refreshAll();}
-      toast('已解除不可借用','success');render();
-    }catch(err){toast('未能解除封鎖：'+errorMessage(err),'error');}
+    const block=state.resourceBlocks.find(x=>x.id===id);if(!block)return;
+    return setCalendarDayStatus(`${block.resource_id}|${block.block_date}|true`);
   }
 
   function anyBlockedDate(resourceId,startDate,endDate){
