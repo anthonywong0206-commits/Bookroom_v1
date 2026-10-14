@@ -985,6 +985,11 @@ ${resourceName(b.resource_id)}｜${b.booking_date}`))return;
   function orgName(id){return state.organizations.find(x=>x.id===id)?.name||'—';}
   function resourceName(id){return state.resources.find(x=>x.id===id)?.name||'—';}
   function shortTime(v){return String(v||'').slice(0,5);}
+  function timeRangesOverlap(startA,endA,startB,endB){
+    const a1=shortTime(startA),a2=shortTime(endA),b1=shortTime(startB),b2=shortTime(endB);
+    if(!a1||!a2||!b1||!b2)return false;
+    return a1<b2&&a2>b1;
+  }
   function toIsoDate(d){const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${day}`;}
   function addDays(iso,days){const d=new Date(`${iso}T12:00:00`);d.setDate(d.getDate()+Number(days||0));return toIsoDate(d);}
   function todayIso(){return toIsoDate(new Date());}
