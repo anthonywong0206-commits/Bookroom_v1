@@ -1,5 +1,4 @@
-# 房間及物品預約系統 v10.9.2
+# v10.9.3 PATCH
 
-v10.9.2 fixes the cumulative booking-window logic. A month that has already been released remains open until its dates pass; opening the next month no longer closes the previous month.
-
-The LIVE Supabase project has already been migrated. Deploy the PATCH over the current site; `config.js` is intentionally not included in the PATCH.
+直接將檔案覆蓋現有網站根目錄。PATCH 不包含 config.js。
+LIVE Supabase 已完成後端更新，不需要再次執行 SQL。

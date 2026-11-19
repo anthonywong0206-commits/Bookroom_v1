@@ -912,12 +912,13 @@
 
   function isPublicResourceHourOpen(resource,dateIso,start,end){
     if(!bookingDateOpen(dateIso)||isResourceBlocked(resource.id,dateIso))return false;
+    // Explicit per-date/hour override is independent from weekly/batch availability.
+    // Whole-day blocks above still take precedence.
+    const overrides=(state.timeOverrides||[]).filter(o=>o.resource_id===resource.id&&String(o.override_date)===dateIso&&shortTime(o.start_time)<end&&shortTime(o.end_time)>start).sort((a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||'')));
+    if(overrides.length)return overrides[overrides.length-1].is_available!==false;
     const weekday=new Date(`${dateIso}T12:00:00`).getDay();
     const rules=(state.availability||[]).filter(a=>a.resource_id===resource.id&&a.active!==false&&availabilityMatchesDate(a,dateIso,weekday));
-    const baseOpen=rules.some(a=>shortTime(a.start_time)<=start&&shortTime(a.end_time)>=end);
-    if(!baseOpen)return false;
-    const overrides=(state.timeOverrides||[]).filter(o=>o.resource_id===resource.id&&String(o.override_date)===dateIso&&shortTime(o.start_time)<end&&shortTime(o.end_time)>start).sort((a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||'')));
-    return overrides.length?overrides[overrides.length-1].is_available!==false:true;
+    return rules.some(a=>shortTime(a.start_time)<=start&&shortTime(a.end_time)>=end);
   }
 
   function renderMyPage() {
