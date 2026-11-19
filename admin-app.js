@@ -252,11 +252,11 @@
   }
 
   function isResourceHourOpen(resource,dateIso,start,end){
-    // Whole-day block has highest priority. Otherwise, an explicit hour override
-    // can independently open/close a slot even when no weekly/batch rule exists.
-    if(getResourceBlock(resource.id,dateIso))return false;
-    const overrides=(state.timeOverrides||[]).filter(o=>o.resource_id===resource.id&&String(o.override_date)===dateIso&&shortTime(o.start_time)<end&&shortTime(o.end_time)>start).sort((a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||'')));
+    // Explicit hour override is the highest-priority exception for that hour.
+    // A whole-day block controls only hours without an explicit override.
+    const overrides=(state.timeOverrides||[]).filter(o=>o.resource_id===resource.id&&String(o.override_date)===dateIso&&shortTime(o.start_time)<end&&shortTime(o.end_time)>start).sort((a,b)=>String(a.updated_at||a.created_at||'').localeCompare(String(b.updated_at||b.created_at||'')));
     if(overrides.length)return overrides[overrides.length-1].is_available!==false;
+    if(getResourceBlock(resource.id,dateIso))return false;
     const weekday=new Date(`${dateIso}T12:00:00`).getDay();
     return state.availability.some(a=>a.resource_id===resource.id&&a.active!==false&&availabilityRuleMatches(a,dateIso,weekday)&&shortTime(a.start_time)<=start&&shortTime(a.end_time)>=end);
   }
@@ -442,7 +442,6 @@
   }
 
   function roomDayStatusSummary(resource,dateIso){
-    if(getResourceBlock(resource.id,dateIso))return {status:'gray',label:'不可借用',available:0,total:0,booked:0};
     let available=0,booked=0;
     for(let h=8;h<21;h++){
       const start=`${String(h).padStart(2,'0')}:00`,end=`${String(h+1).padStart(2,'0')}:00`;
