@@ -1060,21 +1060,27 @@
     if(target < new Date(today.getFullYear(),today.getMonth(),today.getDate(),0))return false;
     const [hh,mm]=policyTimeParts();
     if(p.mode==='fixed_month_day'){
-      let trigger=new Date(hkNow.getFullYear(),hkNow.getMonth(),Math.min(28,Math.max(1,Number(p.fixed_day||20))),hh,mm,0,0);
-      if(hkNow<trigger)trigger=new Date(hkNow.getFullYear(),hkNow.getMonth()-1,Math.min(28,Math.max(1,Number(p.fixed_day||20))),hh,mm,0,0);
+      const fixedDay=Math.min(28,Math.max(1,Number(p.fixed_day||20)));
+      const triggerForMonth=(year,monthIndex)=>new Date(`${year}-${String(monthIndex+1).padStart(2,'0')}-${String(fixedDay).padStart(2,'0')}T${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00+08:00`);
+      const targetMonthStart=new Date(`${dateIso.slice(0,7)}-01T00:00:00+08:00`);
       if(p.scope==='month'){
-        const start=new Date(trigger.getFullYear(),trigger.getMonth()+1,1);
-        const end=new Date(trigger.getFullYear(),trigger.getMonth()+2,0,23,59,59);
-        return target>=start&&target<=end;
+        const releaseMonth=new Date(targetMonthStart);releaseMonth.setMonth(releaseMonth.getMonth()-1);
+        return now>=triggerForMonth(releaseMonth.getFullYear(),releaseMonth.getMonth());
       }
       if(p.scope==='quarter'){
-        const start=new Date(trigger.getFullYear(),trigger.getMonth()+1,1);
-        const end=new Date(trigger.getFullYear(),trigger.getMonth()+4,0,23,59,59);
-        return target>=start&&target<=end;
+        // Each monthly release opens the following 3 calendar months. Once opened, a future date stays open.
+        const releaseMonth=new Date(targetMonthStart);releaseMonth.setMonth(releaseMonth.getMonth()-3);
+        return now>=triggerForMonth(releaseMonth.getFullYear(),releaseMonth.getMonth());
       }
-      const start=new Date(trigger);start.setDate(start.getDate()+1);start.setHours(0,0,0,0);
-      const end=new Date(start);end.setDate(end.getDate()+6);end.setHours(23,59,59,999);
-      return target>=start&&target<=end;
+      // Weekly scope: a monthly trigger opens only the following 7 days.
+      for(const delta of [0,-1]){
+        const m=new Date(targetMonthStart);m.setMonth(m.getMonth()+delta);
+        const trigger=triggerForMonth(m.getFullYear(),m.getMonth());
+        const start=new Date(trigger);start.setDate(start.getDate()+1);start.setHours(0,0,0,0);
+        const end=new Date(start);end.setDate(end.getDate()+6);end.setHours(23,59,59,999);
+        if(target>=start&&target<=end&&now>=trigger)return true;
+      }
+      return false;
     }
     let periodStart;
     if(p.scope==='week'){
