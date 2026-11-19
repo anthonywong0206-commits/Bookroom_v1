@@ -409,6 +409,7 @@
   function readableError(error) {
     const message = error?.message || error?.details || String(error || '資料同步失敗');
     if (/BOOKING_WINDOW_CLOSED/i.test(message)) return '所選日期尚未開放預約';
+    if (/BOOKING_CUTOFF_CLOSED/i.test(message)) return '所選房間時段距離開始不足 3 小時，已停止接受預約';
     if (/get_booking_policy/i.test(message) && /does not exist|schema cache|could not find/i.test(message)) return 'Supabase 尚未套用 v10.5 開放申請期限／物品分類 SQL';
     if (/get_portal_organizations|get_organization_portal_data|verify_organization_portal|submit_organization_/i.test(message) && /does not exist|schema cache|could not find/i.test(message)) return 'Supabase 尚未套用 v9 機構登入及資料隔離 SQL';
     if (/INVALID_ORGANIZATION_PASSWORD/i.test(message)) return '機構密碼不正確';
@@ -864,7 +865,6 @@
   }
 
   function publicRoomDayStatusSummary(resource,dateIso){
-    if(getPublicResourceBlock(resource.id,dateIso))return {status:'gray',label:'不可借用',available:0,total:0,booked:0};
     let available=0,booked=0;
     for(let h=8;h<21;h++){
       const start=`${String(h).padStart(2,'0')}:00`,end=`${String(h+1).padStart(2,'0')}:00`;
@@ -910,8 +910,15 @@
     return isPublicResourceHourOpen(resource,dateIso,start,end)?{status:'green',label:'可借用'}:{status:'gray',label:'不可借用'};
   }
 
+  function roomBookingCutoffOpen(dateIso,start){
+    const target=new Date(`${dateIso}T${shortTime(start)}:00+08:00`);
+    if(Number.isNaN(target.getTime()))return false;
+    return target.getTime()-Date.now()>=3*60*60*1000;
+  }
+
   function isPublicResourceHourOpen(resource,dateIso,start,end){
     if(!bookingDateOpen(dateIso))return false;
+    if(resource.type==='room'&&!roomBookingCutoffOpen(dateIso,start))return false;
     // Explicit per-date/hour override is the highest-priority exception for that hour.
     const overrides=(state.timeOverrides||[]).filter(o=>o.resource_id===resource.id&&String(o.override_date)===dateIso&&shortTime(o.start_time)<end&&shortTime(o.end_time)>start).sort((a,b)=>String(a.updated_at||a.created_at||'').localeCompare(String(b.updated_at||b.created_at||'')));
     if(overrides.length)return overrides[overrides.length-1].is_available!==false;
@@ -1642,7 +1649,7 @@
   }
 
   function isRoomDateAvailable(roomId, dateIso) {
-    return bookingDateOpen(dateIso) && !isResourceBlocked(roomId,dateIso) && getRoomStartTimes(roomId,dateIso,30).length > 0;
+    return bookingDateOpen(dateIso) && getRoomStartTimes(roomId,dateIso,30).length > 0;
   }
 
   function availabilityMatchesDate(rule, dateIso, weekday) {

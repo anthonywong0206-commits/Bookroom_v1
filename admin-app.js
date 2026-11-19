@@ -789,7 +789,11 @@
         state.timeOverrides.push({id:uid('ov'),resource_id,override_date,start_time,end_time,is_available,created_at:new Date().toISOString()});persistDemo();
       }else{
         const r=await supabase.rpc('admin_set_resource_time_override',{p_resource_id:resource_id,p_override_date:override_date,p_start_time:start_time,p_end_time:end_time,p_is_available:is_available});
-        if(r.error)throw r.error;await refreshAll();
+        if(r.error)throw r.error;
+        const verify=await supabase.from('resource_time_overrides').select('*').eq('resource_id',resource_id).eq('override_date',override_date).eq('start_time',start_time).eq('end_time',end_time).maybeSingle();
+        if(verify.error)throw verify.error;
+        if(!verify.data||Boolean(verify.data.is_available)!==is_available)throw new Error('時段狀態未成功寫入，請重新嘗試');
+        await refreshAll();
       }
       toast(is_available?'已設為可借用':'已設為不可借用','success');render();
     }catch(err){toast(errorMessage(err),'error');}
